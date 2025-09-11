@@ -1,0 +1,25 @@
+/* App color palette as CSS variables */
+:root {
+	--color-bg-main: #181c22;
+	--color-bg-secondary: #23272f;
+	--color-bg-accent: #22243a;
+	--color-bg-modal: rgba(0,0,0,0.45);
+	--color-bg-card: #23272f;
+	--color-bg-button: #4e8cff;
+	--color-bg-button-hover: #2563eb;
+	--color-bg-button-alt: #6c47ff;
+	--color-bg-button-alt2: #4b2fd6;
+	--color-bg-danger: #ff4e4e;
+	--color-bg-danger-dark: #c0392b;
+	--color-bg-disabled: #888;
+
+	--color-border: #444;
+
+	--color-text-main: #fff;
+	--color-text-secondary: #bfc7d5;
+	--color-text-accent: #8ab4f8;
+	--color-text-accent2: #6c47ff;
+	--color-text-accent3: #b3a1ff;
+	--color-text-accent4: #4b2fd6;
+	--color-text-warning: #ffb347;
+}
