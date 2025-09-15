@@ -1,4 +1,4 @@
-import { getGameData } from '$lib/models';
+import { getGameData } from '$lib/models/game.js';
 import jwt from 'jsonwebtoken';
 
 /**

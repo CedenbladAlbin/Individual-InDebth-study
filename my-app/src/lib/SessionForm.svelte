@@ -2,6 +2,7 @@
   import { createEventDispatcher, onMount } from 'svelte';
   export let session: any = null; // If editing, else null
   export let npcs: any[] = [];
+  export let players: any[] = [];
   export let items: any[] = [];
   export let scenes: any[] = [];
   export let gameId: string;
@@ -10,17 +11,17 @@
 
   let title = session ? session.title : '';
   let recap = session ? session.recap : '';
-  let context = session ? { ...session.context } : { npcs: [], items: [], scenes: [] };
+  let connections = session ? { ...session.connections } : { npcs: [], items: [], scenes: [], players: [] };
   let isEnded = session ? !!session.isEnded : false;
   let error = '';
   let loading = false;
 
-  function toggleContext(type: 'npcs'|'items'|'scenes', id: string) {
-    if (!context[type]) context[type] = [];
-    if (context[type].includes(id)) {
-      context[type] = context[type].filter((x: string) => x !== id);
+  function toggleConnection(type: 'npcs'|'items'|'scenes'|'players', id: string) {
+    if (!connections[type]) connections[type] = [];
+    if (connections[type].includes(id)) {
+      connections[type] = connections[type].filter((x: string) => x !== id);
     } else {
-      context[type] = [...context[type], id];
+      connections[type] = [...connections[type], id];
     }
   }
 
@@ -35,7 +36,7 @@
       gameId,
       title,
       recap,
-      context,
+      connections,
       isEnded
     };
     if (session && session._id) body.sessionId = session._id;
@@ -72,8 +73,17 @@
     <legend>Attach NPCs</legend>
     {#each npcs as npc}
       <label class="context-checkbox">
-        <input type="checkbox" checked={context.npcs && context.npcs.includes(npc._id)} on:change={() => toggleContext('npcs', npc._id)} />
+        <input type="checkbox" checked={connections.npcs && connections.npcs.includes(npc._id)} on:change={() => toggleConnection('npcs', npc._id)} />
         {npc.name}
+      </label>
+    {/each}
+  </fieldset>
+  <fieldset>
+    <legend>Attach Players</legend>
+    {#each players as player}
+      <label class="context-checkbox">
+        <input type="checkbox" checked={connections.players && connections.players.includes(player._id)} on:change={() => toggleConnection('players', player._id)} />
+        {player.name}
       </label>
     {/each}
   </fieldset>
@@ -81,7 +91,7 @@
     <legend>Attach Items</legend>
     {#each items as item}
       <label class="context-checkbox">
-        <input type="checkbox" checked={context.items && context.items.includes(item._id)} on:change={() => toggleContext('items', item._id)} />
+        <input type="checkbox" checked={connections.items && connections.items.includes(item._id)} on:change={() => toggleConnection('items', item._id)} />
         {item.name}
       </label>
     {/each}
@@ -90,7 +100,7 @@
     <legend>Attach Scenes</legend>
     {#each scenes as scene}
       <label class="context-checkbox">
-        <input type="checkbox" checked={context.scenes && context.scenes.includes(scene._id)} on:change={() => toggleContext('scenes', scene._id)} />
+        <input type="checkbox" checked={connections.scenes && connections.scenes.includes(scene._id)} on:change={() => toggleConnection('scenes', scene._id)} />
         {scene.name}
       </label>
     {/each}

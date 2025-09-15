@@ -17,6 +17,15 @@ export async function DELETE({ url, request }) {
   else return new Response('Invalid type', { status: 400 });
   const db = await getDb();
   const { ObjectId } = await import('mongodb');
+  // If deleting a scene, disconnect all items and npcs that reference this scene
+  if (type === 'scene') {
+    // Remove sceneId from all items that reference this scene
+    await db.collection('items').updateMany({ sceneId: new ObjectId(id) }, { $set: { sceneId: null } });
+    // Remove sceneId from all npcs that reference this scene
+    await db.collection('npcs').updateMany({ sceneId: new ObjectId(id) }, { $set: { sceneId: null } });
+    // Remove this scene's id from itemIds array in the scene (not strictly needed, but for consistency)
+    // (No action needed, as the scene is being deleted)
+  }
   const result = await db.collection(collection).deleteOne({ _id: new ObjectId(id) });
   if (result.deletedCount === 1) {
     return new Response(JSON.stringify({ success: true }), { status: 200 });

@@ -11,20 +11,14 @@
   let players: any = [];
   let notes = {
     summary: '',
-    attendance: '',
     plotDevelopments: '',
     quests: '',
-    actions: '',
-    combats: '',
     loot: '',
     xp: 0,
-    status: '',
     secrets: '',
     factions: '',
     mysteries: '',
     goals: '',
-    rules: '',
-    roleplay: '',
     downtime: '',
     nextPlans: '',
     custom: ''
@@ -123,10 +117,6 @@
         <textarea bind:value={notes.summary}></textarea>
       </label>
       <label>
-        Attendance
-        <input bind:value={notes.attendance} placeholder="Comma-separated player names" />
-      </label>
-      <label>
         Plot Developments
         <textarea bind:value={notes.plotDevelopments}></textarea>
       </label>
@@ -175,10 +165,6 @@
         <span>{notes.xp}</span>
       </label>
       <label>
-        Status
-        <input bind:value={notes.status} />
-      </label>
-      <label>
         Mark session as ended
         <input type="checkbox" bind:checked={isEnded} />
       </label>
@@ -190,14 +176,6 @@
           <label>
             Quests
             <input bind:value={notes.quests} />
-          </label>
-          <label>
-            Actions
-            <textarea bind:value={notes.actions}></textarea>
-          </label>
-          <label>
-            Combats
-            <textarea bind:value={notes.combats}></textarea>
           </label>
           <label>
             Loot
@@ -218,14 +196,6 @@
           <label>
             Goals
             <input bind:value={notes.goals} />
-          </label>
-          <label>
-            Rules
-            <input bind:value={notes.rules} />
-          </label>
-          <label>
-            Roleplay
-            <textarea bind:value={notes.roleplay}></textarea>
           </label>
           <label>
             Downtime

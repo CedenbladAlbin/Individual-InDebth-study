@@ -1,15 +1,34 @@
 <script lang="ts">
+  import { createEventDispatcher } from 'svelte';
+
   export let entities: any[] = [];
   export let type = '';
-  export let onEdit = (entity: any) => {};
-  export let onConnect = (entity: any) => {};
+  export let onCreate = (entity: any) => {};
   export let onNotes = (entity: any) => {};
   export let onDelete = (entity: any) => {};
-</script>
+  export let onRemoveConnection = (type: string, entity: any, targetId: string) => {};
+  export let itemMap: { [key: string]: any } = {};
+  export let npcMap: { [key: string]: any } = {};
+  export let sceneMap: { [key: string]: any } = {};
 
+  const dispatch = createEventDispatcher();
+  function handleCardKeydown(event: KeyboardEvent, entity: any) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      dispatch('entityClick', entity);
+    }
+  }
+</script>
+  <button id="createNew-btn" on:click={onCreate}>Create New {type}</button>
 <div class="card-list">
   {#each entities as entity}
-    <div class="card">
+    <div
+      class="card"
+      role="button"
+      tabindex="0"
+      on:click={() => dispatch('entityClick', entity)}
+      on:keydown={(e) => handleCardKeydown(e, entity)}
+    >
       <div class="card-title">{entity.name}</div>
       <div class="card-desc">{entity.description}</div>
       {#if type === 'scene' && (entity.location || entity.dangerLevel)}
@@ -36,17 +55,96 @@
           {#if entity.benefits}<span>Benefits: {entity.benefits}</span>{/if}
         </div>
       {/if}
+      <div class="card-connections">
+
+
+        {#if type === 'npc'}
+          {#if entity.sceneId || entity.scene}
+          {@const sid = entity.sceneId || (entity.scene && entity.scene._id)}
+            <span class="chip">
+              Scene: {sceneMap[sid]?.name || entity.scene?.name || sid}
+              <button class="chip-remove" title="Remove from scene"
+                on:click|stopPropagation={() => onRemoveConnection('npc-scene', entity, sid)}>×</button>
+            </span>
+          {/if}
+          {#if entity.itemIds && entity.itemIds.length}
+              {#each entity.itemIds as itemId}
+                <span class="chip">{entity.items && entity.items.find((i: any) => i._id === itemId)?.name || itemMap[itemId]?.name || itemId}
+                  <button class="chip-remove" title="Remove item from NPC" on:click|stopPropagation={() => onRemoveConnection('item-npc', { _id: itemId }, entity._id)}>×</button>
+                </span>
+              {/each}
+          {/if}
+        {/if}
+
+        {#if type === 'scene'}
+          {#if entity.npcIds && entity.npcIds.length}
+            {#each entity.npcIds as npcId}
+                <span class="chip">{entity.npcs && entity.npcs.find((n: any) => n._id === npcId)?.name || npcMap[npcId]?.name || npcId}
+                  <button class="chip-remove" title="Remove NPC from scene" on:click|stopPropagation={() => onRemoveConnection('npc-scene', { _id: npcId }, entity._id)}>×</button>
+                </span>
+              {/each}
+          {/if}
+        {/if}
+
+        {#if type === 'item'}
+          {#if entity.ownerPlayer}
+            <span class="chip">Owner: {entity.ownerPlayer.name}
+              <button class="chip-remove" title="Remove from player" on:click|stopPropagation={() => onRemoveConnection('item-player', entity, entity.ownerPlayer._id)}>×</button>
+            </span>
+          {:else if entity.ownerNpc}
+            <span class="chip">Owner: {entity.ownerNpc.name}
+              <button class="chip-remove" title="Remove from NPC" on:click|stopPropagation={() => onRemoveConnection('item-npc', entity, entity.ownerNpc._id)}>×</button>
+            </span>
+          {:else if entity.sceneId || entity.scene}
+            {@const sid = entity.sceneId || (entity.scene && entity.scene._id)}
+            <span class="chip">Scene: {sceneMap[sid]?.name || entity.scene?.name || sid}
+              <button class="chip-remove" title="Remove from scene" on:click|stopPropagation={() => onRemoveConnection('item-scene', entity, sid)}>×</button>
+            </span>
+          {/if}
+        {/if}
+
+        {#if type === 'player'}
+          {#if entity.itemIds && entity.itemIds.length}
+            {#each entity.itemIds as itemId}
+                <span class="chip">{entity.items && entity.items.find((i: any) => i._id === itemId)?.name || (typeof itemMap !== 'undefined' && itemMap[itemId]?.name) || itemId}
+                  <button class="chip-remove" title="Remove item from player" on:click|stopPropagation={() => onRemoveConnection('item-player', { _id: itemId }, entity._id)}>×</button>
+                </span>
+              {/each}
+          {/if}
+        {/if}
+      </div>
       <div class="card-actions">
-        <button on:click={() => onEdit(entity)}>Edit</button>
-        <button on:click={() => onConnect(entity)}>Connect</button>
-        <button on:click={() => onNotes(entity)}>View Notes</button>
-        <button class="delete-btn" on:click={() => onDelete(entity)}>Delete</button>
+        <button on:click|stopPropagation={() => onNotes(entity)}>View Notes</button>
+        <button class="delete-btn" on:click|stopPropagation={() => onDelete(entity)}>Delete</button>
       </div>
     </div>
   {/each}
 </div>
 
 <style>
+.chip-remove {
+  background: none;
+  border: none;
+  color: var(--color-text-accent);
+  font-size: 1.1em;
+  margin-left: 0.3em;
+  cursor: pointer;
+  padding: 0 0.2em;
+  line-height: 1;
+}
+.chip-remove:hover {
+  color: var(--color-bg-danger);
+}
+  #createNew-btn {
+    background: var(--color-bg-button);
+    color: var(--color-text-main);
+    border: none;
+    border-radius: 4px;
+    padding: 0.5em 1em;
+    cursor: pointer;
+    font-size: 1em;
+    transition: background 0.15s;
+  }
 
 .card-list {
   display: flex;
@@ -55,7 +153,7 @@
   margin-top: 1em;
 }
 .card {
-  background: var(--color-bg-secondary);
+  background: var(--color-bg-main);
   border-radius: 8px;
   box-shadow: 0 1px 6px rgba(0,0,0,0.10);
   padding: 1em 1.2em 0.7em 1.2em;
@@ -70,6 +168,7 @@
   font-weight: bold;
   font-size: 1.15em;
   margin-bottom: 0.2em;
+  color: var(--color-text-accent);
 }
 .card-desc {
   color: var(--color-text-secondary);
@@ -105,6 +204,24 @@
 }
 .card-actions .delete-btn:hover {
   background: var(--color-bg-danger-dark);
+}
+
+
+.card-connections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4em;
+  margin-bottom: 0.3em;
+  margin-top: 0.2em;
+}
+.chip {
+  background: var(--color-bg-button);
+  color: var(--color-text-accent);
+  border-radius: 12px;
+  padding: 0.15em 0.7em;
+  font-size: 0.92em;
+  display: inline-block;
+  margin-right: 0.2em;
 }
 
 </style>

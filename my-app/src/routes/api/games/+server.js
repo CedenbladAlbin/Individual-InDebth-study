@@ -1,5 +1,5 @@
 
-import { createGame, getUserGames } from '$lib/models';
+import { createGame, getUserGames } from '$lib/models/game.js';
 import jwt from 'jsonwebtoken';
 
 

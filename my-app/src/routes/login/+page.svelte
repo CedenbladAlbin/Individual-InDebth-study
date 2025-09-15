@@ -15,7 +15,7 @@
         localStorage.setItem('token', data.token);
       }
       message = 'Login successful! Redirecting...';
-      setTimeout(() => window.location.href = '/games', 1000);
+      setTimeout(() => window.location.href = '/my-games', 1000);
     } else {
       const data = await res.json().catch(() => ({}));
       message = data.error || 'Login failed.';

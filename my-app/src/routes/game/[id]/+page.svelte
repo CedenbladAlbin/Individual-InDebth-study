@@ -6,11 +6,45 @@
   import SessionForm from '$lib/SessionForm.svelte';
   import SessionDetailsBox from './SessionDetailsBox.svelte';
   import EntityCardList from '$lib/EntityCardList.svelte';
+  async function handleRemoveConnection(type: string, entity: any, targetId: string) {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    let fromId = entity._id;
+    let toId = targetId;
+    const res = await fetch('/api/game-content/disconnect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ type, fromId, toId })
+    });
+    if (res.ok) {
+      await fetchAllContent();
+    } else {
+      alert('Failed to remove connection.');
+    }
+  }
   import SessionList from './SessionList.svelte';
   import NpcSection from './NpcSection.svelte';
   import PlayerSection from './PlayerSection.svelte';
   import ItemSection from './ItemSection.svelte';
   import SceneSection from './SceneSection.svelte';
+  import SceneFullscreenView from '$lib/SceneFullscreenView.svelte';
+  import ConnectionBox from '$lib/ConnectionBox.svelte';
+
+  // State for showing/hiding the ConnectionBox
+  let showConnectionBox = true;
+  // Drag-and-drop connection handler
+  async function handleDragConnect(from: { type: string, entity: any }, to: { type: string, entity: any }) {
+    // Example: item dropped on player, npc, or scene
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    if (from.type === 'item' && (to.type === 'player' || to.type === 'npc' || to.type === 'scene')) {
+      await connectItemTo(to.type, to.entity._id, from.entity._id);
+    } else if (from.type === 'npc' && to.type === 'scene') {
+      await connectNpcToScene(from.entity._id, to.entity._id);
+    }
+    // Add more connection logic as needed
+    await fetchAllContent();
+  }
   let game: any = null;
   let loading = true;
   let error = '';
@@ -19,10 +53,34 @@
   let players: any = [];
   let items: any = [];
   let scenes: any = [];
+
+  // Lookup maps for entity enrichment
+  let npcMap: { [key: string]: any } = {};
+  let sceneMap: { [key: string]: any } = {};
+  let playerMap: { [key: string]: any } = {};
+  let itemMap: { [key: string]: any } = {};
   let activeTab: 'scene' | 'npc' | 'player' | 'item' | 'settings' | '' = '';
   let editing: { type: string, data: any } | null = null;
   let connecting: { type: string, data: any } | null = null;
   let notesModal: { type: string, entityId: string, notes: any[], loading: boolean, error: string, editingNote: any|null } | null = null;
+
+  // For full connection line view
+  let selectedEntity: { type: string, entity: any } | null = null;
+  let fullscreenScene: any = null;
+
+  function handleEntityClick(type: string, entity: any) {
+    if (type === 'scene') {
+      fullscreenScene = entity;
+    } else {
+      selectedEntity = { type, entity };
+    }
+  }
+  function closeFullscreenScene() {
+    fullscreenScene = null;
+  }
+  function closeConnectionView() {
+    selectedEntity = null;
+  }
   let newNoteTitle = '';
   let newNoteText = '';
   let sessions: any[] = [];
@@ -99,6 +157,24 @@ let editSessionData: any = {};
     players = playerRes.ok ? await playerRes.json() : [];
     items = itemRes.ok ? await itemRes.json() : [];
     scenes = sceneRes.ok ? await sceneRes.json() : [];
+    buildEntityMaps();
+  }
+
+  function buildEntityMaps() {
+    npcMap = Object.fromEntries(npcs.map((n: any) => [n._id, n]));
+    sceneMap = Object.fromEntries(scenes.map((s: any) => [s._id, s]));
+    playerMap = Object.fromEntries(players.map((p: any) => [p._id, p]));
+    itemMap = Object.fromEntries(items.map((i: any) => [i._id, i]));
+  }
+
+  function enrichSessionEntities(session: any) {
+    return {
+      ...session,
+      npcs: (session.npcs || session.connections?.npcs || []).map((id: any) => typeof id === 'object' ? id : npcMap[id] || { _id: id }),
+      scenes: (session.scenes || session.connections?.scenes || []).map((id: any) => typeof id === 'object' ? id : sceneMap[id] || { _id: id }),
+      players: (session.players || session.connections?.players || []).map((id: any) => typeof id === 'object' ? id : playerMap[id] || { _id: id }),
+      items: (session.items || session.connections?.items || []).map((id: any) => typeof id === 'object' ? id : itemMap[id] || { _id: id }),
+    };
   }
 
   onMount(async () => {
@@ -149,10 +225,10 @@ function onSessionSaved() {
     await fetchAllContent();
   }
 
-  function startEdit(type: string, data: any) {
+  function startCreate(type: string, data: any) {
     editing = { type, data };
   }
-  function stopEdit() {
+  function stopCreate() {
     editing = null;
   }
   function startConnect(type: string, data: any) {
@@ -236,6 +312,56 @@ function onSessionSaved() {
       notesModal.error = 'Failed to update note.';
     }
   }
+
+  async function connectItemTo(targetType: 'player' | 'npc' | 'scene', targetId: string, itemId?: string) {
+    // If called from drag-and-drop, itemId is provided directly; if from modal, use connecting.data._id
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    if (!itemId && (!connecting || connecting.type !== 'item')) return;
+    const realItemId = itemId || (connecting && connecting.data && connecting.data._id);
+    if (!realItemId) return;
+    let url = '/api/game-content/connect';
+    let body = {
+      itemId: realItemId,
+      targetType,
+      targetId
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify(body)
+    });
+    if (res.ok) {
+      await fetchAllContent();
+      stopConnect();
+    } else {
+      alert('Failed to connect item.');
+    }
+  }
+
+    // Connect NPC to Scene (location)
+  async function connectNpcToScene(npcId: string, sceneId: string) {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    const url = '/api/game-content/connect';
+    const body = { npcId, sceneId };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify(body)
+    });
+    if (res.ok) {
+      await fetchAllContent();
+      stopConnect();
+    } else {
+      alert('Failed to connect NPC to scene.');
+    }
+  }
+
+  // Handler for removing connections from EntityCardList and sections
+  function onRemoveConnection(type: string, entity: any, targetId: string) {
+    handleRemoveConnection(type, entity, targetId);
+  }
 </script>
 
 
@@ -255,7 +381,7 @@ function onSessionSaved() {
         {upcomingSessions}
         selectedSessionId={selectedSession?._id}
         on:createSession={() => window.location.href = `/session/new?gameId=${id}`}
-        on:selectSession={e => selectedSession = e.detail}
+        on:selectSession={e => selectedSession = enrichSessionEntities(e.detail)}
       />
       {#if selectedSession}
         <SessionDetailsBox
@@ -267,6 +393,7 @@ function onSessionSaved() {
           onSave={saveSessionEdit}
           onCancel={() => editSessionDetails = false}
           onToggle={() => showSessionDetails = !showSessionDetails}
+          onClose={() => { selectedSession = null; }}
         />
       {/if}
 
@@ -282,48 +409,130 @@ function onSessionSaved() {
         <button class:active-tab={activeTab === 'player'} on:click={() => activeTab = 'player'}>Players</button>
         <button class:active-tab={activeTab === 'item'} on:click={() => activeTab = 'item'}>Items</button>
       </nav>
-      {#if activeTab === 'scene'}
+
+      {#if showConnectionBox}
+        <div style="position:relative;">
+          <button class="close-connection-box-btn" on:click={() => showConnectionBox = false} title="Close connection box">×</button>
+          <ConnectionBox
+            {npcs}
+            {players}
+            {items}
+            {scenes}
+            onConnect={handleDragConnect}
+          />
+        </div>
+      {:else}
+        <button class="open-connection-box-btn" on:click={() => showConnectionBox = true} title="Show connection box">Show Connection Box</button>
+      {/if}
+
+      {#if fullscreenScene}
+        <SceneFullscreenView
+          scene={fullscreenScene}
+          npcs={npcs.filter((n: any) => n.sceneId === fullscreenScene._id)}
+          items={items.filter((i: any) => i.sceneId === fullscreenScene._id)}
+          players={players}
+          on:close={closeFullscreenScene}
+        />
+      {/if}
+      {#if selectedEntity}
+        <div class="connection-line-view">
+          <button class="close-btn" on:click={closeConnectionView}>×</button>
+          <h3>Connections for {selectedEntity.entity.name} <span class="type-label">[{selectedEntity.type}]</span></h3>
+          <div class="conn-section">
+            {#if selectedEntity.type === 'npc'}
+              <div><strong>Scene:</strong> {sceneMap[selectedEntity.entity.sceneId]?.name || selectedEntity.entity.sceneId}</div>
+              <div><strong>Items:</strong>
+                {#each selectedEntity.entity.itemIds as itemId}
+                  <span class="chip">{itemMap[itemId]?.name || itemId}</span>
+                {/each}
+              </div>
+            {/if}
+            {#if selectedEntity.type === 'player'}
+              <div><strong>Items:</strong>
+                {#each selectedEntity.entity.itemIds as itemId}
+                  <span class="chip">{itemMap[itemId]?.name || itemId}</span>
+                {/each}
+              </div>
+            {/if}
+            {#if selectedEntity.type === 'item'}
+              <div><strong>Owner:</strong>
+                {#if selectedEntity.entity.ownerPlayer}
+                  Player: {playerMap[selectedEntity.entity.ownerPlayer]? playerMap[selectedEntity.entity.ownerPlayer].name : selectedEntity.entity.ownerPlayer}
+                {:else if selectedEntity.entity.ownerNpc}
+                  NPC: {npcMap[selectedEntity.entity.ownerNpc]?.name || selectedEntity.entity.ownerNpc}
+                {:else if selectedEntity.entity.sceneId}
+                  Scene: {sceneMap[selectedEntity.entity.sceneId]?.name || selectedEntity.entity.sceneId}
+                {:else}
+                  None
+                {/if}
+              </div>
+            {/if}
+          </div>
+        </div>
+      {/if}
+
+      {#if !selectedEntity && activeTab === 'scene'}
         <SceneSection
           {scenes}
-          {startEdit}
+          {startCreate}
           {startConnect}
           {openNotes}
           {deleteContent}
+          onRemoveConnection={handleRemoveConnection}
+          itemMap={itemMap}
+          npcMap={npcMap}
+          sceneMap={sceneMap}
+          on:entityClick={e => handleEntityClick('scene', e.detail)}
         />
       {/if}
-      {#if activeTab === 'npc'}
+      {#if !selectedEntity && activeTab === 'npc'}
         <NpcSection
           {npcs}
-          {startEdit}
+          {startCreate}
           {startConnect}
           {openNotes}
           {deleteContent}
+          onRemoveConnection={handleRemoveConnection}
+          itemMap={itemMap}
+          npcMap={npcMap}
+          sceneMap={sceneMap}
+          on:entityClick={e => handleEntityClick('npc', e.detail)}
         />
       {/if}
-      {#if activeTab === 'player'}
+      {#if !selectedEntity && activeTab === 'player'}
         <PlayerSection
           {players}
-          {startEdit}
+          {startCreate}
           {startConnect}
           {openNotes}
           {deleteContent}
+          onRemoveConnection={handleRemoveConnection}
+          itemMap={itemMap}
+          npcMap={npcMap}
+          sceneMap={sceneMap}
+          on:entityClick={e => handleEntityClick('player', e.detail)}
         />
       {/if}
-      {#if activeTab === 'item'}
+      {#if !selectedEntity && activeTab === 'item'}
         <ItemSection
           {items}
-          {startEdit}
+          {startCreate}
           {startConnect}
           {openNotes}
           {deleteContent}
+          onRemoveConnection={handleRemoveConnection}
+          itemMap={itemMap}
+          npcMap={npcMap}
+          sceneMap={sceneMap}
+          on:entityClick={e => handleEntityClick('item', e.detail)}
         />
       {/if}
       {#if editing}
         <div class="modal">
           <div class="modal-content">
             <h4>Edit {editing.type.charAt(0).toUpperCase() + editing.type.slice(1)}</h4>
-            <GameContentForm type={editing.type as "scene" | "npc" | "player" | "item"} gameId={id} connections={{}} on:created={() => { fetchAllContent(); stopEdit(); }} />
-            <button on:click={stopEdit}>Cancel</button>
+            <GameContentForm type={editing.type as "scene" | "npc" | "player" | "item"} gameId={id} connections={{}} on:created={() => { fetchAllContent(); stopCreate(); }} />
+            <button on:click={stopCreate}>Cancel</button>
           </div>
         </div>
       {/if}
@@ -331,11 +540,52 @@ function onSessionSaved() {
         <div class="modal">
           <div class="modal-content">
             <h4>Connect {connecting.type.charAt(0).toUpperCase() + connecting.type.slice(1)}</h4>
-            <em>Connection UI coming soon...</em>
+            {#if connecting.type === 'item'}
+              <div style="margin-bottom:1em">
+                <div>Choose new owner for this item:</div>
+                <div style="margin:0.7em 0">
+                  <strong>Players:</strong>
+                  {#each players as player}
+                    <button style="margin:0.2em" on:click={() => connectItemTo('player', player._id)}>{player.name}</button>
+                  {/each}
+                </div>
+                <div style="margin:0.7em 0">
+                  <strong>NPCs:</strong>
+                  {#each npcs as npc}
+                    <button style="margin:0.2em" on:click={() => connectItemTo('npc', npc._id)}>{npc.name}</button>
+                  {/each}
+                </div>
+              </div>
+            {:else if connecting.type === 'npc'}
+              <div style="margin-bottom:1em">
+                <div>Choose a Scene for this NPC:</div>
+                <div style="margin:0.7em 0">
+                  <strong>Scenes:</strong>
+                  {#each scenes as scene}
+                    <button style="margin:0.2em" on:click={() => connecting && connectNpcToScene(connecting.data._id, scene._id)}>{scene.name}</button>
+                  {/each}
+                </div>
+              </div>
+            {:else if connecting.type === 'scene'}
+              <div style="margin-bottom:1em">
+                <div>Add NPCs to this Scene:</div>
+                <div style="margin:0.7em 0">
+                  <strong>NPCs:</strong>
+                  {#each npcs as npc}
+                    <button style="margin:0.2em" on:click={() => connecting && connectNpcToScene(npc._id, connecting.data._id)}>{npc.name}</button>
+                  {/each}
+                </div>
+              </div>
+            {:else}
+              <em>Connection UI coming soon...</em>
+            {/if}
+
             <button on:click={stopConnect}>Close</button>
           </div>
         </div>
       {/if}
+
+
       {#if notesModal}
         <div class="modal">
           <div class="modal-content notes-modal">
@@ -376,6 +626,7 @@ function onSessionSaved() {
         </div>
       {/if}
     {/if}
+
   </section>
 </main>
 
@@ -525,99 +776,81 @@ function onSessionSaved() {
 .add-note-form button:hover {
   background: var(--color-bg-button-hover);
 }
+:global(.game-section h3){
+  color: var(--color-text-accent);
+  margin-bottom: 0.8em;
+}
 
 
-
-
-.session-details-box-large.session-details-bottom {
+.connection-line-view {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 48vh;
-  z-index: 1200;
-  background: var(--color-bg-secondary);
-  color: var(--color-text-main);
-  border-radius: 18px 18px 0 0;
-  margin: 0 auto;
-  padding: 2.2em 2.5em 2em 2.5em;
-  box-shadow: 0 -2px 18px rgba(0,0,0,0.18);
-  font-size: 1.18em;
-  min-width: 320px;
-  max-width: 900px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-}
-.session-details-content-boxes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.2em;
-  margin-top: 1.2em;
-}
-.session-info-box {
+  top: 2em;
+  right: 2em;
   background: var(--color-bg-main);
-  border-radius: 8px;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.10);
-  padding: 1em 1.2em 0.7em 1.2em;
-  min-width: 180px;
-  flex: 1 1 220px;
-  margin-bottom: 0.5em;
-  font-size: 1.08em;
+  border-radius: 12px;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.18);
+  padding: 2em 2.5em 1.5em 2.5em;
+  min-width: 340px;
+  max-width: 420px;
+  z-index: 1200;
+  color: var(--color-text-main);
+}
+.connection-line-view h3 {
+  color: var(--color-text-accent);
+  margin-bottom: 1em;
+}
+.connection-line-view .type-label {
+  font-size: 0.9em;
+  color: var(--color-text-secondary);
+  margin-left: 0.5em;
+}
+.connection-line-view .conn-section {
   display: flex;
   flex-direction: column;
+  gap: 1em;
 }
-.session-info-label {
+.connection-line-view .chip {
+  background: var(--color-bg-button);
   color: var(--color-text-accent);
-  font-weight: 600;
-  margin-bottom: 0.2em;
-  display: block;
+  border-radius: 12px;
+  padding: 0.15em 0.7em;
+  font-size: 0.92em;
+  display: inline-block;
+  margin-right: 0.2em;
 }
-.session-details-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1.2em;
-}
-.session-details-header h3 {
+.connection-line-view .close-btn {
+  position: absolute;
+  top: 0.7em;
+  right: 1em;
+  background: none;
+  border: none;
   color: var(--color-text-accent);
-  font-size: 1.35em;
-  margin: 0;
+  font-size: 1.5em;
+  cursor: pointer;
 }
-.session-details-actions button {
+
+.close-connection-box-btn {
+  position: absolute;
+  top: 0.5em;
+  right: 0.5em;
+  background: none;
+  border: none;
+  color: var(--color-text-accent);
+  font-size: 1.5em;
+  cursor: pointer;
+  z-index: 10;
+}
+.open-connection-box-btn {
   background: var(--color-bg-button);
   color: var(--color-text-main);
   border: none;
   border-radius: 6px;
   padding: 0.5em 1.2em;
   font-size: 1em;
-  margin-left: 0.7em;
-  cursor: pointer;
-  font-weight: 500;
-  transition: background 0.15s;
-}
-.session-details-actions button:hover {
-  background: var(--color-bg-button-hover);
-}
-
-.session-details-form label {
-  display: block;
   margin-bottom: 1em;
-  font-weight: 500;
-  color: var(--color-text-accent);
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
 }
-.session-details-form input,
-.session-details-form textarea {
-  width: 100%;
-  margin-top: 0.3em;
-  background: var(--color-bg-main);
-  color: var(--color-text-main);
-  border: 1px solid var(--color-border);
-  border-radius: 0.3rem;
-  padding: 0.7rem;
-  font-size: 1.08em;
-}
+  
+
 </style>
-
-

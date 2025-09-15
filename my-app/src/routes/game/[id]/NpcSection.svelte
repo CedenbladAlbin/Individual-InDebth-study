@@ -2,20 +2,27 @@
     import EntityCardList from "$lib/EntityCardList.svelte";
 
   export let npcs: any[] = [];
-  export let startEdit: (type: string, data: any) => void;
+  export let itemMap: { [key: string]: any } = {};
+  export let npcMap: { [key: string]: any } = {};
+  export let sceneMap: { [key: string]: any } = {};
+  export let startCreate: (type: string, data: any) => void;
   export let startConnect: (type: string, data: any) => void;
   export let openNotes: (type: string, id: string) => void;
   export let deleteContent: (type: string, id: string) => void;
+  export let onRemoveConnection: (type: string, entity: any, targetId: string) => void;
 </script>
 
 <section class="game-section">
-  <h3>NPCs</h3>
   <EntityCardList
     entities={npcs}
     type="npc"
-    onEdit={npc => startEdit('npc', npc)}
-    onConnect={npc => startConnect('npc', npc)}
+    onCreate={npc => startCreate('npc', npc)}
     onNotes={npc => openNotes('npc', npc._id)}
     onDelete={npc => deleteContent('npc', npc._id)}
+    onRemoveConnection={onRemoveConnection}
+    itemMap={itemMap}
+    npcMap={npcMap}
+    sceneMap={sceneMap}
+    on:entityClick
   />
 </section>

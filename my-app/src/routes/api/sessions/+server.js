@@ -39,7 +39,7 @@ function getUserIdFromRequest(request) {
  * Expects: {
  *   gameId, title, sessionId?,
  *   notes: {
- *     summary, attendance, plotDevelopments, npcs, scenes, items, players, quests, actions, combats, loot, xp, status, secrets, factions, mysteries, goals, rules, roleplay, downtime, nextPlans, custom
+ *     summary, plotDevelopments, npcs, scenes, items, players, quests, actions, combats, loot, xp, status, secrets, factions, mysteries, goals, rules, roleplay, downtime, nextPlans, custom
  *   },
  *   connections: {
  *     npcs: [id], items: [id], scenes: [id], players: [id], quests: [id]
@@ -68,24 +68,18 @@ export async function POST({ request }) {
     isEnded: !!isEnded,
     notes: {
       summary: notes.summary || '',
-      attendance: notes.attendance || [],
       plotDevelopments: notes.plotDevelopments || '',
       npcs: notes.npcs || [],
       scenes: notes.scenes || [],
       items: notes.items || [],
       players: notes.players || [],
       quests: notes.quests || [],
-      actions: notes.actions || '',
-      combats: notes.combats || [],
       loot: notes.loot || [],
       xp: notes.xp || '',
-      status: notes.status || '',
       secrets: notes.secrets || '',
       factions: notes.factions || '',
       mysteries: notes.mysteries || '',
       goals: notes.goals || '',
-      rules: notes.rules || '',
-      roleplay: notes.roleplay || '',
       downtime: notes.downtime || '',
       nextPlans: notes.nextPlans || '',
       custom: notes.custom || ''
