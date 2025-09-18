@@ -41,7 +41,7 @@ Verify installation by running in your terminal:
 node -v
 npm -v
 
-Step 2: Create a New SvelteKit Project
+Step 2: Get SvelteKit Running
 Open a terminal and navigate into your project:
 cd my-app
 
