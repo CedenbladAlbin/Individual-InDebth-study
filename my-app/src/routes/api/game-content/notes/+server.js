@@ -1,21 +1,6 @@
 import { getDb } from '$lib/db';
-import jwt from 'jsonwebtoken';
+import { getUserIdFromRequest } from '$lib/auth';
 import { ObjectId } from 'mongodb';
-
-/**
- * @param {Request} request
- */
-function getUserIdFromRequest(request) {
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
-  const token = authHeader.replace('Bearer ', '');
-  try {
-    const user = jwt.verify(token, import.meta.env.VITE_JWT_SECRET || 'changeme');
-    return (user && typeof user === 'object' && 'id' in user) ? user.id : null;
-  } catch {
-    return null;
-  }
-}
 
 // GET: /api/game-content/notes?type=npc&entityId=123
 /**

@@ -55,17 +55,17 @@
   max-width: 600px;
   margin: 2rem auto;
   padding: 2rem;
-  background: #23272f;
+  background: var(--color-bg-secondary);
   border-radius: 16px;
   box-shadow: 0 2px 16px rgba(0,0,0,0.15);
-  color: #fff;
+  color: var(--color-text-main);
 }
 .games-list {
   list-style: none;
   padding: 0;
 }
 .game-item {
-  background: #181c22;
+  background: var(--color-bg-main);
   border-radius: 8px;
   margin-bottom: 1.2rem;
   padding: 1rem 1.2rem;
@@ -78,13 +78,13 @@
   transition: background 0.2s;
 }
 .game-link:hover {
-  background: #22243a;
+  background: var(--color-bg-accent);
 }
 .game-item h3 {
   margin-bottom: 0.3rem;
 }
 .error {
-  color: #ffb347;
+  color: var(--color-text-warning);
   text-align: center;
 }
 </style>

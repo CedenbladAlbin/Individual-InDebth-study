@@ -1,5 +1,5 @@
 <script>
-	// No logic needed for landing page
+	
 </script>
 
 <main class="landing-container">
@@ -33,10 +33,10 @@
 	max-width: 600px;
 	margin: 3rem auto;
 	padding: 2rem;
-	background: #23272f;
+	background: var(--color-bg-secondary);
 	border-radius: 16px;
 	box-shadow: 0 2px 16px rgba(0,0,0,0.15);
-	color: #fff;
+	color: var(--color-text-main);
 }
 .landing-title {
 	text-align: center;
@@ -59,14 +59,14 @@
 	font-weight: bold;
 	font-size: 1.1rem;
 	transition: background 0.2s;
-	color: #fff;
+	color: var(--color-text-main);
 	display: inline-block;
 }
 .landing-btn.primary {
-	background: #6c47ff;
+	background: var(--color-bg-button-alt);
 }
 .landing-btn.primary:hover {
-	background: #4b2fd6;
+	background: var(--color-bg-button-alt2);
 }
 .landing-features {
 	margin-top: 2.5rem;

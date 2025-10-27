@@ -5,7 +5,6 @@
 
   async function createGame() {
     const token = localStorage.getItem('token');
-    console.log('JWT token used for create game:', token);
     const res = await fetch('/api/games', {
       method: 'POST',
       headers: {
@@ -25,18 +24,69 @@
   }
 </script>
 
-<main style="max-width: 500px; margin: 2rem auto; padding: 2rem; background: #23272f; border-radius: 12px; box-shadow: 0 2px 16px rgba(0,0,0,0.15); color: #fff;">
-  <h2 style="text-align:center;">Create a New Game Session</h2>
+<main class="create-game-container">
+  <h2 class="title">Create a New Game Session</h2>
   <form on:submit|preventDefault={createGame}>
     <label for="name">Game Name</label>
-    <input id="name" type="text" bind:value={name} required style="width:100%;margin-bottom:1rem;padding:0.5rem;border-radius:6px;border:1px solid #444;background:#181c22;color:#fff;" />
+    <input id="name" type="text" bind:value={name} required class="input-field" />
 
     <label for="description">Description</label>
-    <textarea id="description" bind:value={description} required style="width:100%;margin-bottom:1rem;padding:0.5rem;border-radius:6px;border:1px solid #444;background:#181c22;color:#fff;"></textarea>
+    <textarea id="description" bind:value={description} required class="textarea-field"></textarea>
 
-    <button type="submit" style="width:100%;padding:0.75rem;border:none;border-radius:6px;background:#6c47ff;color:#fff;font-size:1rem;font-weight:bold;cursor:pointer;transition:background 0.2s;">Create Game</button>
+    <button type="submit" class="create-btn">Create Game</button>
   </form>
   {#if message}
-    <div style="margin-top:1rem;text-align:center;color:#ffb347;">{message}</div>
+    <div class="message">{message}</div>
   {/if}
 </main>
+
+<style>
+.create-game-container {
+  max-width: 500px;
+  margin: 2rem auto;
+  padding: 2rem;
+  background: var(--color-bg-secondary);
+  border-radius: 12px;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.15);
+  color: var(--color-text-main);
+}
+
+.title {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.input-field,
+.textarea-field {
+  width: 100%;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-main);
+  color: var(--color-text-main);
+}
+
+.create-btn {
+  width: 100%;
+  padding: 0.75rem;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-bg-button-alt);
+  color: var(--color-text-main);
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.create-btn:hover {
+  background: var(--color-bg-button-alt2);
+}
+
+.message {
+  margin-top: 1rem;
+  text-align: center;
+  color: var(--color-text-warning);
+}
+</style>

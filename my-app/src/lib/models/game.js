@@ -1,6 +1,6 @@
 // @ts-nocheck
-import { getDb } from '../db.js';
 import { ObjectId } from 'mongodb';
+import { GameModel, NpcModel, PlayerModel, ItemModel, NoteModel } from './EntityModel.js';
 
 /**
  * Create a new game
@@ -8,41 +8,46 @@ import { ObjectId } from 'mongodb';
  * @param {string} name
  * @param {string} description
  **/
-
 export async function createGame(ownerId, name, description) {
-  const db = await getDb();
-  const result = await db.collection('games').insertOne({
+  return await GameModel.create({
     ownerId,
     name,
-    description,
-    createdAt: new Date(),
-    updatedAt: new Date()
+    description: description || ''
   });
-  return result.insertedId;
 }
 
-// @ts-ignore
+/**
+ * Get all games for a user
+ * @param {string} ownerId
+ */
 export async function getUserGames(ownerId) {
-  const db = await getDb();
-  return db.collection('games').find({ ownerId }).toArray();
+  return await GameModel.find({ ownerId });
 }
 
-// @ts-ignore
+/**
+ * Get a single game by ID and owner
+ * @param {string} gameId
+ * @param {string} ownerId
+ */
 export async function getGame(gameId, ownerId) {
-  const db = await getDb();
-  return db.collection('games').findOne({ _id: new ObjectId(gameId), ownerId });
+  return await GameModel.findOne({ _id: new ObjectId(gameId), ownerId });
 }
 
-// @ts-ignore
+/**
+ * Get complete game data with all related entities
+ * @param {string} gameId
+ * @param {string} ownerId
+ */
 export async function getGameData(gameId, ownerId) {
-  const db = await getDb();
-  const game = await db.collection('games').findOne({ _id: new ObjectId(gameId), ownerId });
+  const game = await getGame(gameId, ownerId);
   if (!game) return null;
+
   const [npcs, players, items, notes] = await Promise.all([
-    db.collection('npcs').find({ gameId: new ObjectId(gameId) }).toArray(),
-    db.collection('players').find({ gameId: new ObjectId(gameId) }).toArray(),
-    db.collection('items').find({ gameId: new ObjectId(gameId) }).toArray(),
-    db.collection('notes').find({ gameId: new ObjectId(gameId) }).toArray()
+    NpcModel.findByGameId(gameId),
+    PlayerModel.findByGameId(gameId),
+    ItemModel.findByGameId(gameId),
+    NoteModel.findByGameId(gameId)
   ]);
+
   return { ...game, npcs, players, items, notes };
 }

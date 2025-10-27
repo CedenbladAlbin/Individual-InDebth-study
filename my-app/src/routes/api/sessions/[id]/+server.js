@@ -7,14 +7,15 @@
 export async function PATCH({ params, request }) {
   try {
     const userId = getUserIdFromRequest(request);
-    if (!userId) return new Response('Unauthorized', { status: 401 });
+    if (!userId) return createUnauthorizedResponse();
     const sessionId = params.id;
-    if (!sessionId) return new Response('Missing sessionId', { status: 400 });
-    const db = await getDb();
+    if (!sessionId) return createErrorResponse('Missing sessionId');
+    
     /** @type {Record<string, any>} */
     const update = {};
     const body = await request.json();
     if ('isEnded' in body) update.isEnded = !!body.isEnded;
+    if ('date' in body) update.date = body.date;
     if ('notes' in body) {
       for (const [k, v] of Object.entries(body.notes)) {
         update[`notes.${k}`] = v;
@@ -23,40 +24,36 @@ export async function PATCH({ params, request }) {
     if ('customNote' in body) {
       update['notes.custom'] = body.customNote;
     }
-    if (Object.keys(update).length === 0) return new Response('No fields to update', { status: 400 });
-    const result = await db.collection('sessions').updateOne(
-      { _id: new ObjectId(sessionId), userId },
-      { $set: update }
-    );
-    if (result.matchedCount === 1) {
-      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    if (Object.keys(update).length === 0) return createErrorResponse('No fields to update');
+    
+    const result = await updateSession(sessionId, userId, update);
+    if (result) {
+      return createJsonResponse({ success: true });
     } else {
-      return new Response('Session not found or not authorized', { status: 404 });
+      return createErrorResponse('Session not found or not authorized', 404);
     }
   } catch (err) {
     console.error('PATCH /api/sessions/[id] error:', err);
-    return new Response('Internal Server Error', { status: 500 });
+    return createErrorResponse('Internal Server Error', 500);
   }
 }
 
-/**
- * POST /api/sessions/[id]/notes
- * Add a new note to the session's notes.custom (append or replace)
- * Expects JSON body: { note: string }
- */
+
 // @ts-ignore
 export async function POST({ params, request }) {
   try {
     const userId = getUserIdFromRequest(request);
-    if (!userId) return new Response('Unauthorized', { status: 401 });
+    if (!userId) return createUnauthorizedResponse();
     const sessionId = params.id;
-    if (!sessionId) return new Response('Missing sessionId', { status: 400 });
-    const db = await getDb();
+    if (!sessionId) return createErrorResponse('Missing sessionId');
+    
     const { note } = await request.json();
-    if (!note) return new Response('Missing note', { status: 400 });
-    // Append to notes.custom (as array or string)
-    const session = await db.collection('sessions').findOne({ _id: new ObjectId(sessionId), userId });
-    if (!session) return new Response('Session not found', { status: 404 });
+    if (!note) return createErrorResponse('Missing note');
+    
+    // Get current session to modify custom notes
+    const session = await getSession(sessionId, userId);
+    if (!session) return createErrorResponse('Session not found', 404);
+    
     let custom = session.notes?.custom || '';
     if (Array.isArray(custom)) {
       custom.push(note);
@@ -65,45 +62,21 @@ export async function POST({ params, request }) {
     } else {
       custom = [note];
     }
-    await db.collection('sessions').updateOne(
-      { _id: new ObjectId(sessionId), userId },
-      { $set: { 'notes.custom': custom } }
-    );
-    return new Response(JSON.stringify({ success: true }), { status: 200 });
+    
+    await updateSession(sessionId, userId, { 'notes.custom': custom });
+    return createJsonResponse({ success: true });
   } catch (err) {
     console.error('POST /api/sessions/[id]/notes error:', err);
-    return new Response('Internal Server Error', { status: 500 });
+    return createErrorResponse('Internal Server Error', 500);
   }
 }
-import { getDb } from '$lib/db';
-import jwt from 'jsonwebtoken';
-import { ObjectId } from 'mongodb';
-
-/**
- * @param {Request} request
- */
-/**
- * @param {Request} request
- */
-function getUserIdFromRequest(request) {
-  if (!request.headers || typeof request.headers.get !== 'function') {
-    console.error('Request object does not have headers:', request);
-    return null;
-  }
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
-  const token = authHeader.replace('Bearer ', '');
-  try {
-    const user = jwt.verify(token, import.meta.env.VITE_JWT_SECRET || 'changeme');
-    if (user && typeof user === 'object') {
-      return user.id || user.userId || null;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
+import { updateSession, deleteSession, getSession } from '$lib/models/session.js';
+import { 
+  getUserIdFromRequest, 
+  createUnauthorizedResponse, 
+  createJsonResponse, 
+  createErrorResponse 
+} from '$lib/auth';
 
 /**
  * DELETE /api/sessions/[id]
@@ -113,18 +86,18 @@ function getUserIdFromRequest(request) {
 export async function DELETE({ params, request }) {
   try {
     const userId = getUserIdFromRequest(request);
-    if (!userId) return new Response('Unauthorized', { status: 401 });
+    if (!userId) return createUnauthorizedResponse();
     const sessionId = params.id;
-    if (!sessionId) return new Response('Missing sessionId', { status: 400 });
-    const db = await getDb();
-    const result = await db.collection('sessions').deleteOne({ _id: new ObjectId(sessionId), userId });
-    if (result.deletedCount === 1) {
-      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    if (!sessionId) return createErrorResponse('Missing sessionId');
+    
+    const result = await deleteSession(sessionId, userId);
+    if (result) {
+      return createJsonResponse({ success: true });
     } else {
-      return new Response('Session not found or not authorized', { status: 404 });
+      return createErrorResponse('Session not found or not authorized', 404);
     }
   } catch (err) {
     console.error('DELETE /api/sessions/[id] error:', err);
-    return new Response('Internal Server Error', { status: 500 });
+    return createErrorResponse('Internal Server Error', 500);
   }
 }

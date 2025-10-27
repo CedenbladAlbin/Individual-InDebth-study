@@ -28,9 +28,9 @@
   margin: 2rem auto;
   padding: 2rem;
   border-radius: 12px;
-  background: #23272f;
+  background: var(--color-bg-secondary);
   box-shadow: 0 2px 16px rgba(0,0,0,0.2);
-  color: #fff;
+  color: var(--color-text-main);
 }
 .signup-container h2 {
   margin-bottom: 1.5rem;
@@ -48,29 +48,29 @@
   padding: 0.5rem;
   margin-bottom: 1rem;
   border-radius: 6px;
-  border: 1px solid #444;
-  background: #181c22;
-  color: #fff;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-main);
+  color: var(--color-text-main);
 }
 .signup-container button {
   width: 100%;
   padding: 0.75rem;
   border: none;
   border-radius: 6px;
-  background: #6c47ff;
-  color: #fff;
+  background: var(--color-bg-button-alt);
+  color: var(--color-text-main);
   font-size: 1rem;
   font-weight: bold;
   cursor: pointer;
   transition: background 0.2s;
 }
 .signup-container button:hover {
-  background: #4b2fd6;
+  background: var(--color-bg-button-alt2);
 }
 .signup-container .message {
   margin-top: 1rem;
   text-align: center;
-  color: #ffb347;
+  color: var(--color-text-warning);
 }
 </style>
 

@@ -1,54 +1,48 @@
 
 import { createGame, getUserGames } from '$lib/models/game.js';
-import jwt from 'jsonwebtoken';
+import { 
+  getUserIdFromRequest, 
+  createUnauthorizedResponse, 
+  createJsonResponse, 
+  createErrorResponse 
+} from '$lib/auth.js';
 
 
 /**
+ * Create a new game
  * @param {{ request: Request }} param0
  */
 export async function POST({ request }) {
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return new Response('Unauthorized', { status: 401 });
-  }
-  const token = authHeader.replace('Bearer ', '');
-  let user;
+  const userId = getUserIdFromRequest(request);
+  if (!userId) return createUnauthorizedResponse();
+
   try {
-    user = jwt.verify(token, import.meta.env.VITE_JWT_SECRET || 'changeme');
-  } catch (e) {
-    return new Response('Unauthorized', { status: 401 });
+    const { name, description } = await request.json();
+    
+    if (!name) {
+      return createErrorResponse('Game name is required');
+    }
+
+    const gameId = await createGame(userId, name, description || '');
+    return createJsonResponse({ gameId }, 201);
+  } catch (error) {
+    return createErrorResponse('Failed to create game', 500);
   }
-  // Cast user to JwtPayload to access id
-  const userId = (user && typeof user === 'object' && 'id' in user) ? user.id : undefined;
-  if (!userId) {
-    return new Response('Unauthorized', { status: 401 });
-  }
-  const { name, description } = await request.json();
-  const gameId = await createGame(userId, name, description);
-  return new Response(JSON.stringify({ gameId }), { status: 201 });
 }
 
 
 /**
+ * Get user's games
  * @param {{ request: Request }} param0
  */
 export async function GET({ request }) {
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return new Response('Unauthorized', { status: 401 });
-  }
-  const token = authHeader.replace('Bearer ', '');
-  let user;
+  const userId = getUserIdFromRequest(request);
+  if (!userId) return createUnauthorizedResponse();
+
   try {
-    user = jwt.verify(token, import.meta.env.VITE_JWT_SECRET || 'changeme');
-  } catch (e) {
-    return new Response('Unauthorized', { status: 401 });
+    const games = await getUserGames(userId);
+    return createJsonResponse(games);
+  } catch (error) {
+    return createErrorResponse('Failed to fetch games', 500);
   }
-  // Cast user to JwtPayload to access id
-  const userId = (user && typeof user === 'object' && 'id' in user) ? user.id : undefined;
-  if (!userId) {
-    return new Response('Unauthorized', { status: 401 });
-  }
-  const games = await getUserGames(userId);
-  return new Response(JSON.stringify(games), { status: 200 });
 }

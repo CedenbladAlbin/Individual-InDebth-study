@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { get } from 'svelte/store';
+  import { fetchAllGameContent, authenticatedFetch } from '$lib/api.js';
 
   let title = '';
   let npcs: any = [];
@@ -47,17 +48,11 @@
     const urlParams = new URLSearchParams(window.location.search);
     gameId = urlParams.get('gameId') || '';
     if (gameId) {
-      const token = localStorage.getItem('token');
-      const [npcRes, playerRes, itemRes, sceneRes] = await Promise.all([
-        fetch(`/api/game-content?npc=1&gameId=${gameId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch(`/api/game-content?player=1&gameId=${gameId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch(`/api/game-content?item=1&gameId=${gameId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch(`/api/game-content?scene=1&gameId=${gameId}`, { headers: { 'Authorization': `Bearer ${token}` } })
-      ]);
-      npcs = npcRes.ok ? await npcRes.json() : [];
-      players = playerRes.ok ? await playerRes.json() : [];
-      items = itemRes.ok ? await itemRes.json() : [];
-      scenes = sceneRes.ok ? await sceneRes.json() : [];
+      const content = await fetchAllGameContent(gameId);
+      npcs = content.npcs;
+      players = content.players;
+      items = content.items;
+      scenes = content.scenes;
     }
   });
 
@@ -68,13 +63,8 @@
       error = 'Title and gameId are required.';
       return;
     }
-    const token = localStorage.getItem('token');
-    const res = await fetch('/api/sessions', {
+    const res = await authenticatedFetch('/api/sessions', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-      },
       body: JSON.stringify({
         gameId,
         title,
@@ -163,10 +153,6 @@
         XP
         <input type="range" min="0" max="10000" step="10" bind:value={notes.xp} />
         <span>{notes.xp}</span>
-      </label>
-      <label>
-        Mark session as ended
-        <input type="checkbox" bind:checked={isEnded} />
       </label>
       <button type="button" class="toggle-advanced" on:click={() => showAdvanced = !showAdvanced}>
         {showAdvanced ? 'Hide' : 'Show'} More Options

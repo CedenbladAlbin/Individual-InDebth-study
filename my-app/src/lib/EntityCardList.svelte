@@ -4,6 +4,7 @@
   export let entities: any[] = [];
   export let type = '';
   export let onCreate = (entity: any) => {};
+  export let onEdit = (entity: any) => {};
   export let onNotes = (entity: any) => {};
   export let onDelete = (entity: any) => {};
   export let onRemoveConnection = (type: string, entity: any, targetId: string) => {};
@@ -23,13 +24,15 @@
 <div class="card-list">
   {#each entities as entity}
     <div
-      class="card"
+      class="card {type === 'scene' ? 'scene-card' : ''}"
       role="button"
       tabindex="0"
       on:click={() => dispatch('entityClick', entity)}
       on:keydown={(e) => handleCardKeydown(e, entity)}
     >
-      <div class="card-title">{entity.name}</div>
+      <div class="card-header">
+        <div class="card-title">{entity.name}</div>
+      </div>
       <div class="card-desc">{entity.description}</div>
       {#if type === 'scene' && (entity.location || entity.dangerLevel)}
         <div class="card-meta">
@@ -114,7 +117,8 @@
         {/if}
       </div>
       <div class="card-actions">
-        <button on:click|stopPropagation={() => onNotes(entity)}>View Notes</button>
+        <button class="edit-btn" on:click|stopPropagation={() => onEdit(entity)}>Edit</button>
+        <button on:click|stopPropagation={() => onNotes(entity)}>Notes</button>
         <button class="delete-btn" on:click|stopPropagation={() => onDelete(entity)}>Delete</button>
       </div>
     </div>
@@ -163,12 +167,75 @@
   display: flex;
   flex-direction: column;
   gap: 0.5em;
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.scene-card {
+  position: relative;
+}
+
+.scene-card::after {
+  content: 'Click ⛶ to open map view';
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  background: var(--color-primary);
+  color: white;
+  font-size: 0.75em;
+  padding: 0.25em 0.5em;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 10;
+}
+
+.scene-card:hover::after {
+  opacity: 1;
+}
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.2em;
+}
+
 .card-title {
   font-weight: bold;
   font-size: 1.15em;
-  margin-bottom: 0.2em;
   color: var(--color-text-accent);
+  flex: 1;
+}
+
+.fullscreen-btn {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  opacity: 0.7;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  margin-left: 0.5em;
+  cursor: pointer;
+  padding: 0.25em;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fullscreen-btn:hover,
+.card:hover .fullscreen-btn {
+  opacity: 1;
+  color: var(--color-text-accent);
+  background: var(--color-bg-button);
+  transform: scale(1.1);
 }
 .card-desc {
   color: var(--color-text-secondary);
@@ -198,6 +265,18 @@
 }
 .card-actions button:hover {
   background: var(--color-bg-button-hover);
+}
+.card-actions .edit-btn {
+  background: linear-gradient(135deg, #4f46e5, #6366f1);
+  color: white;
+  font-weight: 600;
+  border: none;
+  box-shadow: 0 2px 4px rgba(79, 70, 229, 0.3);
+}
+.card-actions .edit-btn:hover {
+  background: linear-gradient(135deg, #4338ca, #4f46e5);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(79, 70, 229, 0.4);
 }
 .card-actions .delete-btn {
   background: var(--color-bg-danger);

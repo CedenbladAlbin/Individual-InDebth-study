@@ -23,7 +23,7 @@ export async function POST({ request }) {
   // Generate JWT token
   const token = jwt.sign(
     { id: user._id, email: user.email, name: user.name },
-    import.meta.env.VITE_JWT_SECRET || 'changeme',
+    import.meta.env.VITE_JWT_SECRET || 'secretkey',
     { expiresIn: '2h' }
   );
   return new Response(

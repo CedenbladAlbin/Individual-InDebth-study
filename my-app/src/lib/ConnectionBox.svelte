@@ -127,6 +127,12 @@
 </div>
 
 <style>
+
+h3 {
+  margin-bottom: 0.8em;
+  color: var(--color-text-accent3);
+}
+
 .connection-box {
   background: var(--color-bg-main);
   border-radius: 10px;

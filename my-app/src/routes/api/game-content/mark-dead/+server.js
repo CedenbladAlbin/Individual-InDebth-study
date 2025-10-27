@@ -9,10 +9,12 @@ import { json } from '@sveltejs/kit';
 export async function POST({ request }) {
   const { npcId, playerId } = await request.json();
   if (!npcId) return new Response('Missing npcId', { status: 400 });
+  
   try {
     await NpcKilledByPlayer(npcId, playerId);
     return json({ success: true });
   } catch (e) {
+    console.error('Failed to mark NPC dead:', e);
     return new Response('Failed to mark NPC dead', { status: 500 });
   }
 }

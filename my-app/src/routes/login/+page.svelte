@@ -48,10 +48,10 @@
   max-width: 400px;
   margin: 2rem auto;
   padding: 2rem;
-  background: #23272f;
+  background: var(--color-bg-secondary);
   border-radius: 12px;
   box-shadow: 0 2px 16px rgba(0,0,0,0.15);
-  color: #fff;
+  color: var(--color-text-main);
 }
 .login-title {
   text-align: center;
@@ -61,29 +61,29 @@
   margin-bottom: 1rem;
   padding: 0.5rem;
   border-radius: 6px;
-  border: 1px solid #444;
-  background: #181c22;
-  color: #fff;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-main);
+  color: var(--color-text-main);
 }
 .login-btn {
   width: 100%;
   padding: 0.75rem;
   border: none;
   border-radius: 6px;
-  background: #6c47ff;
-  color: #fff;
+  background: var(--color-bg-button-alt);
+  color: var(--color-text-main);
   font-size: 1rem;
   font-weight: bold;
   cursor: pointer;
   transition: background 0.2s;
 }
 .login-btn:hover {
-  background: #4b2fd6;
+  background: var(--color-bg-button-alt2);
 }
 .login-message {
   margin-top: 1rem;
   text-align: center;
-  color: #ffb347;
+  color: var(--color-text-warning);
 }
   .signup-link {
     margin-top: 1.5rem;
@@ -91,13 +91,13 @@
     font-size: 1rem;
   }
   .signup-link a {
-    color: #6c47ff;
+    color: var(--color-text-accent2);
     text-decoration: underline;
     margin-left: 0.5rem;
     font-weight: bold;
     transition: color 0.2s;
   }
   .signup-link a:hover {
-    color: #4b2fd6;
+    color: var(--color-text-accent4);
   }
 </style>

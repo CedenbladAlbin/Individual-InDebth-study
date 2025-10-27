@@ -3,20 +3,25 @@
   export let type: 'npc' | 'player' | 'item' | 'scene';
   export let gameId: string;
   export let connections: any = {};
+  export let initialData: any = null; // For editing existing entities
   export let onCreated: ((data: any) => void) | undefined = undefined;
-  let name = '';
-  let description = '';
+  // Initialize form fields with existing data if editing
+  let name = initialData?.name || '';
+  let description = initialData?.description || '';
   // Extra fields for each type
-  let itemType = '';
-  let itemBenefits = '';
-  let npcRole = '';
-  let npcStatus = '';
-  let playerClass = '';
-  let playerLevel = '';
-  let sceneLocation = '';
-  let sceneDangerLevel = '';
+  let itemType = initialData?.itemType || '';
+  let itemBenefits = initialData?.benefits || '';
+  let npcRole = initialData?.role || '';
+  let npcStatus = initialData?.status || '';
+  let playerClass = initialData?.class || '';
+  let playerLevel = initialData?.level || '';
+  let sceneLocation = initialData?.location || '';
+  let sceneDangerLevel = initialData?.dangerLevel || '';
   let error = '';
   let loading = false;
+
+  // Determine if we're editing or creating
+  $: isEditing = initialData && initialData._id;
   const dispatch = createEventDispatcher();
 
   async function handleSubmit() {
@@ -44,9 +49,15 @@
       data: { name, description, ...extraData },
       connections
     };
+
+    // If editing, include the ID and use PUT method
+    if (isEditing) {
+      body.id = initialData._id;
+    }
+
     try {
       const res = await fetch('/api/game-content', {
-        method: 'POST',
+        method: isEditing ? 'PUT' : 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
@@ -55,15 +66,26 @@
       });
       if (res.ok) {
         const result = await res.json();
-        name = '';
-        description = '';
+        if (!isEditing) {
+          // Clear form only when creating new entities
+          name = '';
+          description = '';
+          itemType = '';
+          itemBenefits = '';
+          npcRole = '';
+          npcStatus = '';
+          playerClass = '';
+          playerLevel = '';
+          sceneLocation = '';
+          sceneDangerLevel = '';
+        }
         dispatch('created', result);
         if (onCreated) onCreated(result);
       } else {
-        error = 'Failed to create.';
+        error = isEditing ? 'Failed to update.' : 'Failed to create.';
       }
     } catch (e) {
-      error = 'Failed to create.';
+      error = isEditing ? 'Failed to update.' : 'Failed to create.';
     }
     loading = false;
   }
@@ -90,7 +112,7 @@
     <input type="text" bind:value={sceneDangerLevel} placeholder="Danger Level (e.g. low, high)" />
   {/if}
 
-  <button type="submit" disabled={loading}>{loading ? 'Saving...' : `Add ${type}`}</button>
+  <button type="submit" disabled={loading}>{loading ? 'Saving...' : (isEditing ? `Update ${type}` : `Add ${type}`)}</button>
   {#if error}
     <div class="error">{error}</div>
   {/if}

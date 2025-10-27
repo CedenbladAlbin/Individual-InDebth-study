@@ -1,22 +1,11 @@
 import { getGameData } from '$lib/models/game.js';
-import jwt from 'jsonwebtoken';
+import { getUserIdFromRequest } from '$lib/auth';
 
 /**
  * @param {{ request: Request, params: { id: string } }} param0
  */
 export async function GET({ request, params }) {
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return new Response('Unauthorized', { status: 401 });
-  }
-  const token = authHeader.replace('Bearer ', '');
-  let user;
-  try {
-    user = jwt.verify(token, import.meta.env.VITE_JWT_SECRET || 'changeme');
-  } catch (e) {
-    return new Response('Unauthorized', { status: 401 });
-  }
-  const userId = (user && typeof user === 'object' && 'id' in user) ? user.id : undefined;
+  const userId = getUserIdFromRequest(request);
   if (!userId) {
     return new Response('Unauthorized', { status: 401 });
   }

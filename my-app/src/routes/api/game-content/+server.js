@@ -60,23 +60,8 @@ export async function GET({ url, request }) {
 }
 
 import { getDb } from '$lib/db';
-import jwt from 'jsonwebtoken';
+import { getUserIdFromRequest } from '$lib/auth';
 import { ObjectId } from 'mongodb';
-
-/**
- * @param {Request} request
- */
-function getUserIdFromRequest(request) {
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
-  const token = authHeader.replace('Bearer ', '');
-  try {
-    const user = jwt.verify(token, import.meta.env.VITE_JWT_SECRET || 'changeme');
-    return (user && typeof user === 'object' && 'id' in user) ? user.id : null;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Create content (item, npc, player, scene) and connect to game and optionally to other content.
@@ -121,4 +106,58 @@ export async function POST({ request }) {
     await db.collection('npcs').updateOne({ _id: result.insertedId }, { $set: { killedByPlayerId: connections.killedByPlayerId } });
   }
   return new Response(JSON.stringify({ success: true, id: result.insertedId }), { status: 201 });
+}
+
+/**
+ * Update existing content (item, npc, player, scene)
+ * Expects body: { type, id, gameId, data, connections }
+ * @param {{ request: Request }} param0
+ */
+export async function PUT({ request }) {
+  const userId = getUserIdFromRequest(request);
+  if (!userId) return new Response('Unauthorized', { status: 401 });
+  const { type, id, gameId, data, connections = {} } = await request.json();
+  if (!type || !id || !gameId || !data) return new Response('Missing fields', { status: 400 });
+  
+  const db = await getDb();
+  let collection = '';
+  if (type === 'npc') collection = 'npcs';
+  else if (type === 'player') collection = 'players';
+  else if (type === 'item') collection = 'items';
+  else if (type === 'scene') collection = 'scenes';
+  else return new Response('Invalid type', { status: 400 });
+
+  let updateData = { ...data };
+  
+  // Handle type-specific updates
+  if (type === 'npc') {
+    updateData = { 
+      ...updateData, 
+      sceneId: connections.sceneId || null, 
+      itemIds: connections.itemIds || [], 
+      killedByPlayerId: connections.killedByPlayerId || null 
+    };
+  } else if (type === 'player') {
+    updateData = { 
+      ...updateData, 
+      itemIds: connections.itemIds || [] 
+    };
+  } else if (type === 'item') {
+    updateData = { 
+      ...updateData, 
+      ownerNpcId: connections.npcId || null, 
+      ownerPlayerId: connections.playerId || null 
+    };
+  }
+
+  const result = await db.collection(collection).updateOne(
+    { _id: new ObjectId(id), gameId }, 
+    { $set: updateData }
+  );
+  
+  if (result.matchedCount === 0) {
+    return new Response('Entity not found or unauthorized', { status: 404 });
+  }
+
+  return new Response(JSON.stringify({ success: true, id }), { status: 200 });
 }

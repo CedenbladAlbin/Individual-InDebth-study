@@ -1,5 +1,6 @@
 <script lang="ts">
 import { onMount, createEventDispatcher } from 'svelte';
+import { authenticatedFetch, getAuthHeaders } from '$lib/api.js';
 
 // Marker size for placement
 let markerSize = 28;
@@ -38,21 +39,16 @@ function handleClose() {
 
 export let onRemoveNpc: (npc: any) => void = async (npc) => {
   if (!npc?._id) return;
-  const res = await fetch(`/api/game-content?type=npc&id=${npc._id}`, {
-    method: 'DELETE',
-    headers: { 'authorization': localStorage.getItem('token') || '' }
+  const res = await authenticatedFetch(`/api/game-content?type=npc&id=${npc._id}`, {
+    method: 'DELETE'
   });
   // Always update local UI, even if backend fails
   npcs = npcs.filter(n => n._id !== npc._id);
 };
 export let onRemoveItem: (item: any) => void = async (item) => {
   if (!item?._id || !scene?._id) return;
-  const res = await fetch('/api/game-content/disconnect', {
+  const res = await authenticatedFetch('/api/game-content/disconnect', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'authorization': localStorage.getItem('token') || ''
-    },
     body: JSON.stringify({ type: 'item-scene', fromId: item._id, toId: scene._id })
   });
   if (res.ok) {
@@ -157,10 +153,11 @@ export let onRemoveItem: (item: any) => void = async (item) => {
     uploadingImage = true;
     const formData = new FormData();
     formData.append('image', selectedImage);
+    // Note: FormData uploads need special handling - don't use authenticatedFetch for this
     const res = await fetch(`/api/scenes/${scene._id}/image`, {
       method: 'POST',
       body: formData,
-      headers: { 'authorization': localStorage.getItem('token') || '' }
+      headers: getAuthHeaders()
     });
     uploadingImage = false;
     if (res.ok) {
@@ -170,9 +167,7 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   }
   async function loadSceneImage() {
     if (!scene?._id) return;
-    const res = await fetch(`/api/scenes/${scene._id}/image`, {
-      headers: { 'authorization': localStorage.getItem('token') || '' }
-    });
+    const res = await authenticatedFetch(`/api/scenes/${scene._id}/image`);
     if (res.ok) {
       const blob = await res.blob();
       sceneImageUrl = URL.createObjectURL(blob);
@@ -188,7 +183,7 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   
 
   <div class="scene-fullscreen-view map-dominant-layout" role="dialog" tabindex="0" on:keydown={e => { if (e.key === 'Escape') handleClose(); }}>
-    <button class="close-btn" on:click={handleClose} aria-label="Close scene view">Close</button>
+   
  
 
     <div class="map-main-area-with-sidebar">
@@ -244,25 +239,15 @@ export let onRemoveItem: (item: any) => void = async (item) => {
               </button>
             {/each}
           </div>
-          <div class="marker-controls">
-            <input type="text" placeholder="Marker label" bind:value={markerLabel} />
-            <input type="color" bind:value={markerColor} />
-            <div class="marker-size-slider">
-              <label for="marker-size">Marker Size:</label>
-              <input id="marker-size" type="range" min="12" max="64" step="1" bind:value={markerSize} on:input={handleMarkerSizeChange} />
-              <span>{markerSize}px</span>
-            </div>
-            <button class="add-btn" on:click={() => placingMarker = true} disabled={placingMarker || !markerLabel}>Place Marker</button>
-            {#if placingMarker}
-              <span class="placing-hint">Click on the map to place marker</span>
-            {/if}
-          </div>
         {/if}
       </div>
 
     </div>
     <div class="sidebar-toggle-area">
+      <div class="sidebar-toggle">
       <button class="sidebar-toggle-btn" on:click={() => sidebarOpen = !sidebarOpen}>{sidebarOpen ? 'Hide Info' : 'Show Info'}</button>
+      <button class="sidebar-toggle-btn" on:click={handleClose} aria-label="Close scene view">Close map view</button>
+      </div>
       {#if sidebarOpen}
         <div class="sidebar-info">
           <div class="overview-panel sidebar-section">
@@ -272,8 +257,9 @@ export let onRemoveItem: (item: any) => void = async (item) => {
               <label>
                 Scene Image:
                 <input type="file" accept="image/*" on:change={onImageSelect} />
+                <button class="add-btn" type="submit" disabled={!selectedImage || uploadingImage}>{uploadingImage ? 'Uploading...' : 'Upload'}</button>
               </label>
-              <button class="add-btn" type="submit" disabled={!selectedImage || uploadingImage}>{uploadingImage ? 'Uploading...' : 'Upload'}</button>
+              
             </form>
         
             <div class="quick-stats">
@@ -373,7 +359,7 @@ export let onRemoveItem: (item: any) => void = async (item) => {
               {/each}
               {#if npcs.length === 0}
                 <p>No NPCs in this scene.</p>
-              {/if}s
+              {/if}
             </div>
           </div>
         </div>
@@ -440,25 +426,81 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   align-self: center;
 }
 .map-scale-slider {
-    position: absolute;
-  width: 70vw;
+  position: absolute;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 300px;
   display: flex;
   align-items: center;
-  gap: 3.7em;
-  margin: 1em 0 0.5em 0;
-  font-size: 2em;
-  justify-content: flex-start;
+  gap: 1rem;
+  background: var(--color-bg-card);
+  padding: 1rem 1.5rem;
+  border-radius: 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text-main);
+  box-shadow: 
+    0 4px 15px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--color-border);
+  backdrop-filter: blur(10px);
+  z-index: 50;
 }
 .map-scale-slider input[type="range"] {
-  flex: 1 1 0%;
-  accent-color: var(--color-accent, #2196f3);
-  height: 2px;
+  flex: 1;
+  appearance: none;
+  height: 6px;
+  background: linear-gradient(90deg, var(--color-bg-secondary), var(--color-bg-button), var(--color-bg-danger));
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.map-scale-slider input[type="range"]:hover {
+  background: linear-gradient(90deg, var(--color-bg-accent), var(--color-bg-button-hover), var(--color-bg-danger-dark));
+  transform: scale(1.02);
+}
+
+.map-scale-slider input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  background: var(--color-text-main);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid var(--color-bg-button);
+  box-shadow: 
+    0 3px 8px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition: all 0.2s ease;
+}
+
+.map-scale-slider input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 
+    0 4px 12px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.map-scale-slider input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  background: var(--color-text-main);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid var(--color-bg-button);
+  box-shadow: 
+    0 3px 8px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition: all 0.2s ease;
 }
 
 .scene-fullscreen-view.map-dominant-layout {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
-  background: var(--color-bg-modal);
+  background: var(--color-bg-main);
   z-index: 2000;
   display: flex;
   flex-direction: row;
@@ -466,6 +508,19 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   justify-content: center;
   padding: 0;
   overflow: hidden;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  animation: fadeInLayout 0.5s ease-out;
+}
+
+@keyframes fadeInLayout {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 .map-main-area {
   flex: 1 1 0%;
@@ -474,9 +529,12 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: var(--color-bg-main);
+  background: var(--color-bg-secondary);
   position: relative;
   z-index: 1;
+  border: 2px solid var(--color-border);
+  border-radius: 12px;
+  margin: 0.5rem;
 }
 .big-map {
   flex: 1 1 0%;
@@ -484,12 +542,15 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   width: 100vw;
   max-width: 100vw;
   max-height: 100vh;
-  background: var(--color-bg-secondary);
+  background: radial-gradient(ellipse at center, #2c3e50, #1a252f);
   display: flex;
   align-items: center;
   justify-content: center;
   resize: both;
   overflow: auto;
+  position: relative;
+  border: 2px solid rgba(52, 152, 219, 0.3);
+  box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.3);
 }
 .sidebar-toggle-area {
   position: absolute;
@@ -501,28 +562,72 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   align-items: flex-start;
   gap: 0.7em;
 }
+
+.sidebar-toggle {
+  display: flex;
+  flex-direction: row;
+  gap: 0.7em;
+}
+
 .sidebar-toggle-btn {
-  font-size: 1.2em;
+  font-size: 1.1em;
   font-weight: 600;
   background: var(--color-bg-button);
   color: var(--color-text-main);
   border: none;
   border-radius: 8px;
-  padding: 0.5em 1.2em;
+  padding: 0.6em 1.2em;
   cursor: pointer;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.10);
-  margin-bottom: 0.5em;
+  box-shadow: 
+    0 2px 8px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  margin-bottom: 0.75em;
+  transition: all 0.2s ease;
+  border: 1px solid var(--color-border);
+}
+
+.sidebar-toggle-btn:hover {
+  background: var(--color-bg-button-hover);
+  transform: translateY(-1px);
+  box-shadow: 
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 .sidebar-info {
-  background: var(--color-bg-main);
-  border-radius: 14px;
-  box-shadow: 0 2px 16px rgba(0,0,0,0.13);
-  padding: 1.2em 1.5em 1.2em 1.5em;
-  min-width: 340px;
-  max-width: 420px;
+  background: var(--color-bg-secondary);
+  border-radius: 12px;
+  box-shadow: 
+    0 4px 20px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  padding: 1.5rem;
+  min-width: 320px;
+  max-width: 400px;
+  height: calc(100vh - 15rem);
   display: flex;
   flex-direction: column;
-  gap: 1.5em;
+  gap: 1.5rem;
+  border: 1px solid var(--color-border);
+  backdrop-filter: blur(10px);
+  overflow-y: auto;
+}
+
+.sidebar-info::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar-info::-webkit-scrollbar-track {
+  background: var(--color-bg-main);
+  border-radius: 4px;
+}
+
+.sidebar-info::-webkit-scrollbar-thumb {
+  background: var(--color-bg-button);
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+
+.sidebar-info::-webkit-scrollbar-thumb:hover {
+  background: var(--color-bg-button-hover);
 }
 .sidebar-section {
   margin-bottom: 1.2em;
@@ -544,23 +649,60 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   display: flex;
   flex-direction: row;
   align-items: flex-end;
-  gap: 1em;
-  margin-bottom: 1.2em;
-  background: var(--color-bg-secondary);
-  padding: 0.7em 1em 0.7em 1em;
-  border-radius: 8px;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.08);
+  gap: 1.25em;
+  margin-bottom: 1.5em;
+  background: linear-gradient(145deg, #455a64, #37474f);
+  padding: 1.25em 1.5em;
+  border-radius: 12px;
+  box-shadow: 
+    0 4px 12px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 .scene-image-upload label {
-  font-weight: 500;
-  color: var(--color-text-main);
+  font-weight: 600;
+  color: #ecf0f1;
   display: flex;
   flex-direction: column;
-  gap: 0.3em;
+  gap: 0.5em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  width: 100%;
 }
 .scene-image-upload input[type="file"] {
-  margin-top: 0.2em;
+  margin-top: 0.5em;
   font-size: 1em;
+  padding: 0.5em;
+  background: linear-gradient(145deg, #2c3e50, #34495e);
+  border: 1px solid rgba(52, 152, 219, 0.3);
+  border-radius: 8px;
+  color: #ecf0f1;
+  cursor: pointer;
+  transition: all 0.3s ease;
+
+}
+
+.scene-image-upload input[type="file"]:hover {
+  background: linear-gradient(145deg, #34495e, #3498db);
+  border-color: rgba(52, 152, 219, 0.5);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.scene-image-upload input[type="file"]::file-selector-button {
+  background: linear-gradient(145deg, #3498db, #2980b9);
+  color: white;
+  border: none;
+  padding: 0.5em 1em;
+  border-radius: 6px;
+  margin-right: 0.5em;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.scene-image-upload input[type="file"]::file-selector-button:hover {
+  background: linear-gradient(145deg, #2980b9, #1e6b96);
+  transform: scale(1.05);
 }
 .scene-image-upload .add-btn {
   margin-left: 0.5em;
@@ -594,21 +736,31 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   padding: 2em 2em 2em 2em;
 }
 .scene-fullscreen-view .close-btn {
-    position: absolute;
-    top: 1.6rem;
-    left: 9.5em;
-    z-index: 10;
-  font-size: 1.2em;
-    font-weight: 600;
-    background: var(--color-bg-button);
-    color: var(--color-text-main);
-    border: none;
-    border-radius: 8px;
-    padding: 0.5em 1.2em;
-    cursor: pointer;
-    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.10);
-    margin-bottom: 0.5em;
-    z-index: 80;
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  z-index: 1000;
+  font-size: 1.1em;
+  font-weight: 600;
+  background: var(--color-bg-danger);
+  color: var(--color-text-main);
+  border: none;
+  border-radius: 8px;
+  padding: 0.6em 1.2em;
+  cursor: pointer;
+  box-shadow: 
+    0 2px 8px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition: all 0.2s ease;
+  border: 1px solid var(--color-border);
+}
+
+.scene-fullscreen-view .close-btn:hover {
+  background: var(--color-bg-danger-dark);
+  transform: translateY(-1px);
+  box-shadow: 
+    0 4px 12px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 .scene-panels {
   display: flex;
@@ -632,18 +784,45 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   position: relative;
 }
 .overview-panel h2 {
-  color: var(--color-text-accent);
-  margin-bottom: 0.2em;
+  color: #ecf0f1;
+  margin-bottom: 0.5em;
+  font-weight: 700;
+  font-size: 1.8em;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  background: linear-gradient(135deg, #3498db, #e74c3c);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 .overview-panel .desc {
-  color: var(--color-text-main);
-  margin-bottom: 1em;
+  color: #bdc3c7;
+  margin-bottom: 1.5em;
+  line-height: 1.6;
+  font-size: 1.1em;
 }
 .quick-stats {
   display: flex;
-  gap: 2em;
-  margin-top: 1em;
+  gap: 2.5em;
+  margin-top: 1.5em;
   font-size: 1.1em;
+  background: linear-gradient(145deg, #2c3e50, #34495e);
+  padding: 1em 1.5em;
+  border-radius: 12px;
+  box-shadow: 
+    0 4px 12px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(52, 152, 219, 0.2);
+}
+
+.quick-stats strong {
+  color: #3498db;
+  font-weight: 700;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.quick-stats span {
+  color: #ecf0f1;
+  font-weight: 500;
 }
 .teams-panel {
   min-width: 340px;
@@ -655,17 +834,48 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   gap: 1.2em;
 }
 .team-card {
-  background: var(--color-bg-secondary);
-  border-radius: 10px;
-  padding: 1em 1em 0.7em 1em;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.10);
-  margin-bottom: 0.5em;
+  background: linear-gradient(145deg, #455a64, #37474f);
+  border-radius: 12px;
+  padding: 1.25em 1.25em 1em 1.25em;
+  box-shadow: 
+    0 4px 15px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  margin-bottom: 0.75em;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  position: relative;
+  overflow: hidden;
 }
+
 .team-card.friend {
-  border-left: 5px solid var(--color-success, #4caf50);
+  border-left: 4px solid #27ae60;
+  background: linear-gradient(145deg, #2d5a3d, #1e3a26);
 }
+
+.team-card.friend::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #27ae60, #2ecc71);
+  box-shadow: 0 0 10px rgba(39, 174, 96, 0.5);
+}
+
 .team-card.foe {
-  border-left: 5px solid var(--color-bg-danger, #e53935);
+  border-left: 4px solid #e74c3c;
+  background: linear-gradient(145deg, #5a2d2d, #3a1e1e);
+}
+
+.team-card.foe::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #e74c3c, #e67e22);
+  box-shadow: 0 0 10px rgba(231, 76, 60, 0.5);
 }
 .team-header {
   display: flex;
@@ -674,12 +884,17 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   margin-bottom: 0.5em;
 }
 .team-name {
-  font-weight: bold;
-  color: var(--color-text-accent);
+  font-weight: 700;
+  color: #ecf0f1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  font-size: 1.1em;
 }
 .team-type {
-  color: var(--color-text-secondary);
-  font-size: 0.98em;
+  color: #bdc3c7;
+  font-size: 0.9em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 .team-members {
   display: flex;
@@ -688,14 +903,27 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   margin-bottom: 0.5em;
 }
 .chip {
-  background: var(--color-bg-button);
-  color: var(--color-text-accent);
-  border-radius: 12px;
-  padding: 0.15em 0.7em;
-  font-size: 0.98em;
+  background: linear-gradient(145deg, #3498db, #2980b9);
+  color: white;
+  border-radius: 16px;
+  padding: 0.5em 1em;
+  font-size: 0.9em;
+  font-weight: 600;
   display: inline-flex;
   align-items: center;
-  gap: 0.3em;
+  gap: 0.5em;
+  box-shadow: 
+    0 2px 8px rgba(52, 152, 219, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.2s ease;
+}
+
+.chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 
+    0 4px 12px rgba(52, 152, 219, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 .remove-chip {
   background: none;
@@ -717,14 +945,27 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   margin-top: 0.2em;
 }
 .add-btn {
-  background: var(--color-bg-button);
-  color: var(--color-text-main);
+  background: linear-gradient(145deg, #27ae60, #219a52);
+  color: white;
   border: none;
-  border-radius: 6px;
-  padding: 0.2em 0.7em;
-  font-size: 0.98em;
+  border-radius: 8px;
+  padding: 0.5em 1em;
+  font-size: 0.9em;
+  font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  box-shadow: 
+    0 3px 10px rgba(39, 174, 96, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  transition: all 0.3s ease;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.add-btn:hover {
+  background: linear-gradient(145deg, #219a52, #27ae60);
+  transform: translateY(-1px);
+  box-shadow: 
+    0 5px 15px rgba(39, 174, 96, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 .items-panel {
   min-width: 320px;
@@ -736,30 +977,60 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   gap: 0.7em;
 }
 .entity-card {
-  background: var(--color-bg-secondary);
-  border-radius: 8px;
-  padding: 0.7em 1.2em;
+  background: linear-gradient(145deg, #455a64, #37474f);
+  border-radius: 12px;
+  padding: 1em 1.5em;
   display: flex;
   align-items: center;
-  gap: 1.2em;
+  gap: 1.5em;
   font-size: 1.05em;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.10);
+  box-shadow: 
+    0 4px 12px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+  margin-bottom: 0.75em;
 }
+
+.entity-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 
+    0 6px 20px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  border-color: rgba(52, 152, 219, 0.3);
+}
+
 .entity-name {
-  font-weight: bold;
-  color: var(--color-text-accent);
+  font-weight: 700;
+  color: #ecf0f1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 .entity-type {
-  color: var(--color-text-secondary);
+  color: #95a5a6;
+  font-weight: 500;
 }
 .remove-btn {
-  background: var(--color-bg-button);
-  color: var(--color-text-main);
+  background: linear-gradient(145deg, #e74c3c, #c0392b);
+  color: white;
   border: none;
-  border-radius: 4px;
-  padding: 0.2em 0.7em;
-  font-size: 1em;
+  border-radius: 8px;
+  padding: 0.5em 1em;
+  font-size: 0.9em;
+  font-weight: 600;
   cursor: pointer;
+  box-shadow: 
+    0 3px 10px rgba(231, 76, 60, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  transition: all 0.3s ease;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.remove-btn:hover {
+  background: linear-gradient(145deg, #c0392b, #e74c3c);
+  transform: translateY(-1px);
+  box-shadow: 
+    0 5px 15px rgba(231, 76, 60, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 .map-panel {
   min-width: 340px;
@@ -788,7 +1059,7 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   transform: translate(-50%, -50%);
   padding: 0.2em 0.7em;
   border-radius: 8px;
-  color: #fff;
+  color: var(--color-text-main);
   font-size: 1em;
   pointer-events: none;
   font-weight: bold;
@@ -796,12 +1067,7 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   cursor: pointer;
   z-index: 5000;
 }
-.marker-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.7em;
-  margin-top: 0.5em;
-}
+
 .placing-hint {
   color: var(--color-text-warning, #ff9800);
   font-size: 0.98em;
@@ -816,35 +1082,32 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   height: 100vh;
 }
 .marker-sidebar {
-    position: absolute;
-    right: 0;
-    height: 100vh;
-  width: 220px;
-  background: var(--color-bg-secondary);
-  border-left: 2px solid var(--color-bg-main);
+  position: absolute;
+  right: 0;
+  height: 100vh;
+  width: 240px;
+  background: linear-gradient(180deg, #34495e, #2c3e50);
+  border-left: 2px solid rgba(52, 152, 219, 0.3);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  padding: 1.2em 1em;
-  gap: 1em;
-  box-shadow: -2px 0 8px rgba(0,0,0,0.06);
+  padding: 1.5rem 1.25rem;
+  gap: 1.25rem;
+  box-shadow: 
+    -4px 0 20px rgba(0, 0, 0, 0.3),
+    inset 1px 0 0 rgba(255, 255, 255, 0.1);
   z-index: 2;
+  backdrop-filter: blur(10px);
 }
 .marker-sidebar h4 {
-  margin: 0 0 0.7em 0;
-  font-size: 1.1em;
-  color: var(--color-text-accent);
+  margin: 0 0 1rem 0;
+  font-size: 1.3rem;
+  color: #ecf0f1;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
-.marker-sidebar .marker-controls {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5em;
-}
-.marker-sidebar .placing-hint {
-  margin-top: 0.3em;
-}
-
 
 .premade-markers {
   display: flex;
@@ -853,19 +1116,42 @@ export let onRemoveItem: (item: any) => void = async (item) => {
   margin-bottom: 1em;
 }
 .premade-marker-btn {
-  border: none;
-  border-radius: 8px;
-  color: #fff;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  color: white;
   font-weight: bold;
-  font-size: 1em;
-  padding: 0.4em 1em;
+  font-size: 0.9em;
+  padding: 0.75em 1.25em;
   cursor: pointer;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.10);
-  transition: transform 0.08s;
+  box-shadow: 
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
 }
+
+.premade-marker-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.6s;
+}
+
+.premade-marker-btn:hover::before {
+  left: 100%;
+}
+
 .premade-marker-btn:hover, .premade-marker-btn:focus {
-  transform: scale(1.08);
-  outline: 2px solid var(--color-text-accent, #fff);
+  transform: translateY(-2px) scale(1.05);
+  border-color: rgba(255, 255, 255, 0.4);
+  box-shadow: 
+    0 6px 20px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 .marker-icon-on-map {
   width: 1.7em;
