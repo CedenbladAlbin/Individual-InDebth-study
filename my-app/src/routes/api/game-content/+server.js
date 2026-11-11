@@ -1,124 +1,92 @@
+import { json, error } from '@sveltejs/kit';
+import { getDb } from '$lib/server/db.js';
+import { COLLECTIONS, isEntityType, requireUser, requireGame, requireEntity, readJson, str } from '$lib/server/access.js';
+import { ALLOWED_FIELDS, FIELD_MAX, DEFAULT_LINKS, deleteEntity } from '$lib/server/content.js';
+
 /**
- * Delete a content item (item, npc, player, scene) by id and type
- * Expects query: ?type=item|npc|player|scene&id=...
- * @param {{ url: URL, request: Request }} param0
+ * GET /api/game-content?<type>=1&gameId=...  (type: npc | player | item | scene)
+ * @type {import('./$types').RequestHandler}
  */
-export async function DELETE({ url, request }) {
-  const userId = getUserIdFromRequest(request);
-  if (!userId) return new Response('Unauthorized', { status: 401 });
-  const type = url.searchParams.get('type');
-  const id = url.searchParams.get('id');
-  if (!type || !id) return new Response('Missing type or id', { status: 400 });
-  let collection = '';
-  if (type === 'npc') collection = 'npcs';
-  else if (type === 'player') collection = 'players';
-  else if (type === 'item') collection = 'items';
-  else if (type === 'scene') collection = 'scenes';
-  else return new Response('Invalid type', { status: 400 });
-  const db = await getDb();
-  const { ObjectId } = await import('mongodb');
-  // If deleting a scene, disconnect all items and npcs that reference this scene
-  if (type === 'scene') {
-    // Remove sceneId from all items that reference this scene
-    await db.collection('items').updateMany({ sceneId: new ObjectId(id) }, { $set: { sceneId: null } });
-    // Remove sceneId from all npcs that reference this scene
-    await db.collection('npcs').updateMany({ sceneId: new ObjectId(id) }, { $set: { sceneId: null } });
-    // Remove this scene's id from itemIds array in the scene (not strictly needed, but for consistency)
-    // (No action needed, as the scene is being deleted)
-  }
-  const result = await db.collection(collection).deleteOne({ _id: new ObjectId(id) });
-  if (result.deletedCount === 1) {
-    return new Response(JSON.stringify({ success: true }), { status: 200 });
-  } else {
-    return new Response('Not found', { status: 404 });
-  }
-}
-/**
- * Fetch all content for a game by type (npc, player, item, scene)
- * Query: ?npc=1&gameId=... or ?player=1&gameId=... etc
- * @param {{ url: URL, request: Request }} param0
- */
-export async function GET({ url, request }) {
-  const userId = getUserIdFromRequest(request);
-  if (!userId) return new Response('Unauthorized', { status: 401 });
+export async function GET({ url, locals }) {
+  const userId = requireUser(locals);
   const gameId = url.searchParams.get('gameId');
-  if (!gameId) return new Response('Missing gameId', { status: 400 });
+  await requireGame(gameId, userId);
+  const type = Object.keys(COLLECTIONS).find((t) => url.searchParams.has(t));
+  if (!isEntityType(type)) error(400, 'Missing type');
   const db = await getDb();
-  let type = '';
-  if (url.searchParams.has('npc')) type = 'npc';
-  else if (url.searchParams.has('player')) type = 'player';
-  else if (url.searchParams.has('item')) type = 'item';
-  else if (url.searchParams.has('scene')) type = 'scene';
-  else return new Response('Missing type', { status: 400 });
-  let collection = '';
-  if (type === 'npc') collection = 'npcs';
-  else if (type === 'player') collection = 'players';
-  else if (type === 'item') collection = 'items';
-  else if (type === 'scene') collection = 'scenes';
-  const docs = await db.collection(collection).find({ gameId }).toArray();
-  return new Response(JSON.stringify(docs), { status: 200 });
-}
-
-import { getDb } from '$lib/db';
-import jwt from 'jsonwebtoken';
-import { ObjectId } from 'mongodb';
-
-/**
- * @param {Request} request
- */
-function getUserIdFromRequest(request) {
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
-  const token = authHeader.replace('Bearer ', '');
-  try {
-    const user = jwt.verify(token, import.meta.env.VITE_JWT_SECRET || 'changeme');
-    return (user && typeof user === 'object' && 'id' in user) ? user.id : null;
-  } catch {
-    return null;
-  }
+  // Scene images are large base64 blobs; they're served separately by /api/scenes/[id]/image
+  const options = type === 'scene' ? { projection: { image: 0 } } : {};
+  return json(await db.collection(COLLECTIONS[type]).find({ gameId }, options).toArray());
 }
 
 /**
- * Create content (item, npc, player, scene) and connect to game and optionally to other content.
- * Expects body: { type, gameId, data, connections }
- * type: 'item' | 'npc' | 'player' | 'scene'
- * data: object with content fields
- * connections: { sceneId?, npcIds?, playerIds?, itemIds?, killedByPlayerId?, givenToPlayerId? }
- * @param {{ request: Request }} param0
+ * POST /api/game-content  body: { type, gameId, data }
+ * @type {import('./$types').RequestHandler}
  */
-export async function POST({ request }) {
-  const userId = getUserIdFromRequest(request);
-  if (!userId) return new Response('Unauthorized', { status: 401 });
-  const { type, gameId, data, connections = {} } = await request.json();
-  if (!type || !gameId || !data) return new Response('Missing fields', { status: 400 });
+export async function POST({ request, locals }) {
+  const userId = requireUser(locals);
+  const { type, gameId, data } = await readJson(request);
+  if (!isEntityType(type)) error(400, 'Invalid type');
+  if (!data || typeof data !== 'object') error(400, 'Missing data');
+  await requireGame(gameId, userId);
+
+  /** @type {Record<string, string>} */
+  const fields = {};
+  for (const key of ALLOWED_FIELDS[type]) fields[key] = str(data[key], FIELD_MAX[key] ?? 10000).trim();
+  if (!fields.name.trim()) error(400, 'Name is required');
+
   const db = await getDb();
-  let result;
-  if (type === 'scene') {
-    result = await db.collection('scenes').insertOne({ ...data, gameId });
-  } else if (type === 'npc') {
-    result = await db.collection('npcs').insertOne({ ...data, gameId, sceneId: connections.sceneId, itemIds: connections.itemIds || [], killedByPlayerId: connections.killedByPlayerId || null });
-  } else if (type === 'player') {
-    result = await db.collection('players').insertOne({ ...data, gameId, itemIds: connections.itemIds || [] });
-  } else if (type === 'item') {
-    result = await db.collection('items').insertOne({ ...data, gameId, ownerNpcId: connections.npcId || null, ownerPlayerId: connections.playerId || null });
-  } else {
-    return new Response('Invalid type', { status: 400 });
+  const result = await db.collection(COLLECTIONS[type]).insertOne({
+    ...fields,
+    ...structuredClone(DEFAULT_LINKS[type]),
+    gameId: String(gameId),
+    createdAt: new Date()
+  });
+  return json({ success: true, id: result.insertedId }, { status: 201 });
+}
+
+/**
+ * DELETE /api/game-content?type=...&id=...
+ * @type {import('./$types').RequestHandler}
+ */
+export async function DELETE({ url, locals }) {
+  const userId = requireUser(locals);
+  const type = url.searchParams.get('type');
+  const entity = await requireEntity(type, url.searchParams.get('id'), userId);
+  const db = await getDb();
+  await deleteEntity(db, /** @type {any} */ (type), entity);
+  return json({ success: true });
+}
+
+/**
+ * PATCH /api/game-content — edit one or many entities of the same type.
+ * body: { type, ids: string[] (max 500), data: { name?, description?, group?, ...type fields } }
+ * Only the fields present in `data` are changed.
+ * @type {import('./$types').RequestHandler}
+ */
+export async function PATCH({ request, locals }) {
+  const userId = requireUser(locals);
+  const { type, ids, data } = await readJson(request);
+  if (!isEntityType(type)) error(400, 'Invalid type');
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 500) error(400, 'ids must be a non-empty array (max 500)');
+  if (!data || typeof data !== 'object') error(400, 'Missing data');
+
+  /** @type {Record<string, string>} */
+  const set = {};
+  for (const key of ALLOWED_FIELDS[type]) {
+    if (key in data) set[key] = str(data[key], FIELD_MAX[key] ?? 10000).trim();
   }
-  // Optionally update relationships
-  if (type === 'npc' && connections.itemIds?.length) {
-    await db.collection('items').updateMany({ _id: { $in: connections.itemIds.map(/** @param {string} id */ (id) => new ObjectId(id)) } }, { $set: { ownerNpcId: result.insertedId } });
-  }
-  if (type === 'player' && connections.itemIds?.length) {
-    await db.collection('items').updateMany({ _id: { $in: connections.itemIds.map(/** @param {string} id */ (id) => new ObjectId(id)) } }, { $set: { ownerPlayerId: result.insertedId } });
-  }
-  if (type === 'item' && connections.playerId) {
-    await db.collection('players').updateOne({ _id: new ObjectId(connections.playerId) }, { $addToSet: { itemIds: result.insertedId } });
-  }
-  if (type === 'item' && connections.npcId) {
-    await db.collection('npcs').updateOne({ _id: new ObjectId(connections.npcId) }, { $addToSet: { itemIds: result.insertedId } });
-  }
-  if (type === 'npc' && connections.killedByPlayerId) {
-    await db.collection('npcs').updateOne({ _id: result.insertedId }, { $set: { killedByPlayerId: connections.killedByPlayerId } });
-  }
-  return new Response(JSON.stringify({ success: true, id: result.insertedId }), { status: 201 });
+  if ('name' in set && !set.name) error(400, 'Name cannot be empty');
+  if (Object.keys(set).length === 0) error(400, 'No editable fields given');
+
+  // Every id must belong to one of the user's games
+  const entities = [];
+  for (const id of new Set(ids)) entities.push(await requireEntity(type, id, userId));
+
+  const db = await getDb();
+  const result = await db.collection(COLLECTIONS[type]).updateMany(
+    { _id: { $in: entities.map((e) => e._id) } },
+    { $set: { ...set, updatedAt: new Date() } }
+  );
+  return json({ success: true, updated: result.modifiedCount });
 }

@@ -1,20 +1,26 @@
-import { getDb } from '$lib/db';
+import { json } from '@sveltejs/kit';
 import bcrypt from 'bcryptjs';
+import { getDb } from '$lib/server/db.js';
+import { readJson } from '$lib/server/access.js';
 
-/**
- * @param {{ request: Request }} param0
- */
+/** @type {import('./$types').RequestHandler} */
 export async function POST({ request }) {
-  const { email, password, name } = await request.json();
-  if (!email || !password || !name) {
-    return new Response(JSON.stringify({ error: 'All fields are required.' }), { status: 400 });
+  const { email, password, name } = await readJson(request);
+  if (typeof email !== 'string' || typeof password !== 'string' || typeof name !== 'string' || !email || !password || !name.trim()) {
+    return json({ error: 'All fields are required.' }, { status: 400 });
+  }
+  if (password.length < 8) {
+    return json({ error: 'Password must be at least 8 characters.' }, { status: 400 });
+  }
+  if (password.length > 72) {
+    // bcrypt only uses the first 72 bytes
+    return json({ error: 'Password must be at most 72 characters.' }, { status: 400 });
   }
   const db = await getDb();
-  const existing = await db.collection('users').findOne({ email });
-  if (existing) {
-    return new Response(JSON.stringify({ error: 'Email already registered.' }), { status: 409 });
+  if (await db.collection('users').findOne({ email })) {
+    return json({ error: 'Email already registered.' }, { status: 409 });
   }
   const hashed = await bcrypt.hash(password, 10);
-  await db.collection('users').insertOne({ email, name, password: hashed, createdAt: new Date() });
-  return new Response(JSON.stringify({ success: true }), { status: 201 });
+  await db.collection('users').insertOne({ email, name: name.trim().slice(0, 100), password: hashed, createdAt: new Date() });
+  return json({ success: true }, { status: 201 });
 }

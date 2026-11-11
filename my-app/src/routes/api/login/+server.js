@@ -1,37 +1,24 @@
-
-import { getDb } from '$lib/db';
+import { json } from '@sveltejs/kit';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import { getDb } from '$lib/server/db.js';
+import { signToken } from '$lib/server/auth.js';
+import { readJson } from '$lib/server/access.js';
 
-/**
- * @param {{ request: Request }} param0
- */
+/** @type {import('./$types').RequestHandler} */
 export async function POST({ request }) {
-  const { email, password } = await request.json();
-  if (!email || !password) {
-    return new Response(JSON.stringify({ error: 'Email and password are required.' }), { status: 400 });
+  const { email, password } = await readJson(request);
+  // Reject non-strings so objects like { "$ne": null } can't reach the query
+  if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
+    return json({ error: 'Email and password are required.' }, { status: 400 });
   }
   const db = await getDb();
   const user = await db.collection('users').findOne({ email });
-  if (!user) {
-    return new Response(JSON.stringify({ error: 'Invalid email or password.' }), { status: 401 });
+  if (!user || !(await bcrypt.compare(password, user.password))) {
+    return json({ error: 'Invalid email or password.' }, { status: 401 });
   }
-  const valid = await bcrypt.compare(password, user.password);
-  if (!valid) {
-    return new Response(JSON.stringify({ error: 'Invalid email or password.' }), { status: 401 });
-  }
-  // Generate JWT token
-  const token = jwt.sign(
-    { id: user._id, email: user.email, name: user.name },
-    import.meta.env.VITE_JWT_SECRET || 'changeme',
-    { expiresIn: '2h' }
-  );
-  return new Response(
-    JSON.stringify({
-      success: true,
-      token,
-      user: { email: user.email, name: user.name, id: user._id }
-    }),
-    { status: 200 }
-  );
+  return json({
+    success: true,
+    token: signToken({ _id: user._id, email: user.email, name: user.name }),
+    user: { email: user.email, name: user.name, id: user._id }
+  });
 }

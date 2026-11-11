@@ -1,271 +1,308 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import GameContentForm from '$lib/GameContentForm.svelte';
+  import { goto } from '$app/navigation';
+  import { api, getToken } from '$lib/api';
+  import Modal from '$lib/Modal.svelte';
+  import GameContentForm, { FIELDS } from '$lib/GameContentForm.svelte';
   import SidebarSessions from '$lib/SidebarSessions.svelte';
-  import SessionForm from '$lib/SessionForm.svelte';
-  import SessionDetailsBox from './SessionDetailsBox.svelte';
-  import EntityCardList from '$lib/EntityCardList.svelte';
-  async function handleRemoveConnection(type: string, entity: any, targetId: string) {
-    const token = localStorage.getItem('token');
-    if (!token) return;
-    let fromId = entity._id;
-    let toId = targetId;
-    const res = await fetch('/api/game-content/disconnect', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ type, fromId, toId })
-    });
-    if (res.ok) {
-      await fetchAllContent();
-    } else {
-      alert('Failed to remove connection.');
-    }
-  }
-  import SessionList from './SessionList.svelte';
-  import NpcSection from './NpcSection.svelte';
-  import PlayerSection from './PlayerSection.svelte';
-  import ItemSection from './ItemSection.svelte';
-  import SceneSection from './SceneSection.svelte';
   import SceneFullscreenView from '$lib/SceneFullscreenView.svelte';
-  import ConnectionBox from '$lib/ConnectionBox.svelte';
+  import EntityBrowser from '$lib/EntityBrowser.svelte';
+  import EntityPicker, { type Candidate } from '$lib/EntityPicker.svelte';
+  import SessionDetailsBox from './SessionDetailsBox.svelte';
+  import { sortByDate, formatSessionDate } from '$lib/sessions';
 
-  // State for showing/hiding the ConnectionBox
-  let showConnectionBox = true;
-  // Drag-and-drop connection handler
-  async function handleDragConnect(from: { type: string, entity: any }, to: { type: string, entity: any }) {
-    // Example: item dropped on player, npc, or scene
-    const token = localStorage.getItem('token');
-    if (!token) return;
-    if (from.type === 'item' && (to.type === 'player' || to.type === 'npc' || to.type === 'scene')) {
-      await connectItemTo(to.type, to.entity._id, from.entity._id);
-    } else if (from.type === 'npc' && to.type === 'scene') {
-      await connectNpcToScene(from.entity._id, to.entity._id);
-    }
-    // Add more connection logic as needed
-    await fetchAllContent();
-  }
-  let game: any = null;
-  let loading = true;
-  let error = '';
-  let id = '';
-  let npcs: any = [];
-  let players: any = [];
-  let items: any = [];
-  let scenes: any = [];
+  type ContentType = 'scene' | 'npc' | 'player' | 'item';
 
-  // Lookup maps for entity enrichment
-  let npcMap: { [key: string]: any } = {};
-  let sceneMap: { [key: string]: any } = {};
-  let playerMap: { [key: string]: any } = {};
-  let itemMap: { [key: string]: any } = {};
-  let activeTab: 'scene' | 'npc' | 'player' | 'item' | 'settings' | '' = '';
-  let editing: { type: string, data: any } | null = null;
-  let connecting: { type: string, data: any } | null = null;
-  let notesModal: { type: string, entityId: string, notes: any[], loading: boolean, error: string, editingNote: any|null } | null = null;
-
-  // For full connection line view
-  let selectedEntity: { type: string, entity: any } | null = null;
-  let fullscreenScene: any = null;
-
-  function handleEntityClick(type: string, entity: any) {
-    if (type === 'scene') {
-      fullscreenScene = entity;
-    } else {
-      selectedEntity = { type, entity };
-    }
-  }
-  function closeFullscreenScene() {
-    fullscreenScene = null;
-  }
-  function closeConnectionView() {
-    selectedEntity = null;
-  }
-  let newNoteTitle = '';
-  let newNoteText = '';
-  let sessions: any[] = [];
-
-  let selectedSession: any = null;
-let showSessionDetails = true;
-let editSessionDetails = false;
-let editSessionData: any = {};
-  let sessionLoading = false;
-  let sessionError = '';
-
-  // Add these two lines to fix the error
-  let sessionModalOpen = false;
-  let sessionModalSession: any = null;
-
-  // Add saveSessionEdit function to fix the error
-  function saveSessionEdit() {
-    // Example: Save the edited session details
-    if (!selectedSession || !editSessionDetails) return;
-    // Here you would typically send the updated data to your API
-    // For now, just update the selectedSession and exit edit mode
-    selectedSession = { ...selectedSession, ...editSessionData };
-    editSessionDetails = false;
-  }
-
-  // Remove session handler
-  async function removeSession(sessionId: string) {
-    const token = localStorage.getItem('token');
-    if (!token) return;
-    if (!confirm('Are you sure you want to remove this session?')) return;
-    const res = await fetch(`/api/sessions/${sessionId}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    if (res.ok) {
-      sessions = sessions.filter(s => s._id !== sessionId);
-    } else {
-      alert('Failed to remove session.');
-    }
-  }
-
-  $: sessionHistory = sessions.filter(s => s.isEnded);
-  $: upcomingSessions = sessions.filter(s => !s.isEnded);
-  async function fetchSessions() {
-    const token = localStorage.getItem('token');
-    if (!token) return;
-    sessionLoading = true;
-    try {
-      const res = await fetch(`/api/sessions?gameId=${id}`, { headers: { 'Authorization': `Bearer ${token}` } });
-      if (res.ok) {
-        sessions = await res.json();
-      } else {
-        sessionError = 'Failed to load sessions.';
-      }
-    } catch {
-      sessionError = 'Failed to load sessions.';
-    }
-    sessionLoading = false;
-  }
+  const TABS: { type: ContentType; label: string; one: string }[] = [
+    { type: 'scene', label: 'Scenes', one: 'scene' },
+    { type: 'npc', label: 'NPCs', one: 'NPC' },
+    { type: 'player', label: 'Players', one: 'player' },
+    { type: 'item', label: 'Items', one: 'item' }
+  ];
+  const ONE: Record<string, string> = { scene: 'Scene', npc: 'NPC', player: 'Player', item: 'Item' };
 
   $: id = $page.params.id ?? '';
 
-  async function fetchAllContent() {
-    const token = localStorage.getItem('token');
-    if (!token) return;
-    // Fetch all content for this game
-    const [npcRes, playerRes, itemRes, sceneRes] = await Promise.all([
-      fetch(`/api/game-content?npc=1&gameId=${id}`, { headers: { 'Authorization': `Bearer ${token}` } }),
-      fetch(`/api/game-content?player=1&gameId=${id}`, { headers: { 'Authorization': `Bearer ${token}` } }),
-      fetch(`/api/game-content?item=1&gameId=${id}`, { headers: { 'Authorization': `Bearer ${token}` } }),
-      fetch(`/api/game-content?scene=1&gameId=${id}`, { headers: { 'Authorization': `Bearer ${token}` } })
-    ]);
-    npcs = npcRes.ok ? await npcRes.json() : [];
-    players = playerRes.ok ? await playerRes.json() : [];
-    items = itemRes.ok ? await itemRes.json() : [];
-    scenes = sceneRes.ok ? await sceneRes.json() : [];
-    buildEntityMaps();
+  let game: any = null;
+  let loading = true;
+  let error = '';
+
+  let npcs: any[] = [];
+  let players: any[] = [];
+  let items: any[] = [];
+  let scenes: any[] = [];
+
+  // Lookup maps keyed by _id
+  let npcMap: Record<string, any> = {};
+  let sceneMap: Record<string, any> = {};
+  let playerMap: Record<string, any> = {};
+  let itemMap: Record<string, any> = {};
+
+  let activeTab: ContentType = 'scene';
+  let groupFilter = '';
+  let creatingType: ContentType | null = null;
+  let editing: { type: ContentType; entity: any } | null = null;
+  let selectedEntity: { type: ContentType; entity: any } | null = null;
+  let fullscreenScene: any = null;
+
+  let sessions: any[] = [];
+  let selectedSession: any = null;
+
+  let notesModal: { type: string, entityId: string, name: string, notes: any[], loading: boolean, error: string, editingNote: any | null } | null = null;
+  let newNoteTitle = '';
+  let newNoteText = '';
+
+  $: lists = { scene: scenes, npc: npcs, player: players, item: items } as Record<ContentType, any[]>;
+  $: activeLabel = TABS.find(t => t.type === activeTab)!;
+  $: allGroups = [...new Set([...scenes, ...npcs, ...players, ...items].map((e) => (e.group || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+
+  function switchTab(type: ContentType) {
+    activeTab = type;
+    groupFilter = '';
   }
 
-  function buildEntityMaps() {
-    npcMap = Object.fromEntries(npcs.map((n: any) => [n._id, n]));
-    sceneMap = Object.fromEntries(scenes.map((s: any) => [s._id, s]));
-    playerMap = Object.fromEntries(players.map((p: any) => [p._id, p]));
-    itemMap = Object.fromEntries(items.map((i: any) => [i._id, i]));
+  /** Sessions an entity was linked to, newest first */
+  function sessionsWith(type: string, id: string) {
+    const key = ({ npc: 'npcs', player: 'players', item: 'items', scene: 'scenes' } as Record<string, string>)[type];
+    return sortByDate(sessions.filter((s) => s.connections?.[key]?.includes(id)), 'desc');
   }
-
-  function enrichSessionEntities(session: any) {
-    return {
-      ...session,
-      npcs: (session.npcs || session.connections?.npcs || []).map((id: any) => typeof id === 'object' ? id : npcMap[id] || { _id: id }),
-      scenes: (session.scenes || session.connections?.scenes || []).map((id: any) => typeof id === 'object' ? id : sceneMap[id] || { _id: id }),
-      players: (session.players || session.connections?.players || []).map((id: any) => typeof id === 'object' ? id : playerMap[id] || { _id: id }),
-      items: (session.items || session.connections?.items || []).map((id: any) => typeof id === 'object' ? id : itemMap[id] || { _id: id }),
-    };
+  let showAllAppearances = false;
+  let lastEntityId = '';
+  $: if (selectedEntity?.entity._id !== lastEntityId) {
+    lastEntityId = selectedEntity?.entity._id ?? '';
+    showAllAppearances = false;
   }
+  $: appearances = selectedEntity && sessions ? sessionsWith(selectedEntity.type, selectedEntity.entity._id) : [];
 
   onMount(async () => {
-    const token = localStorage.getItem('token');
-    if (!token) {
-      error = 'You must be signed in to view this game.';
-      loading = false;
+    if (!getToken()) {
+      window.location.href = '/login';
       return;
     }
     try {
-      const res = await fetch(`/api/games/${id}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await api(`/api/games/${id}`);
       if (res.ok) {
         game = await res.json();
-        await fetchAllContent();
-        await fetchSessions();
+        await Promise.all([fetchAllContent(), fetchSessions()]);
       } else {
-        error = 'Failed to load game.';
+        error = res.status === 404 ? 'This game does not exist or belongs to someone else.' : 'Failed to load game.';
       }
-    } catch (e) {
+    } catch {
       error = 'Failed to load game.';
     }
     loading = false;
   });
-function openSessionModal(session = null) {
-  sessionModalSession = session;
-  sessionModalOpen = true;
-}
-function closeSessionModal() {
-  sessionModalOpen = false;
-  sessionModalSession = null;
-}
-function onSessionSaved() {
-  closeSessionModal();
-  fetchSessions();
-}
 
+  async function fetchAllContent() {
+    const load = async (type: ContentType) => {
+      const res = await api(`/api/game-content?${type}=1&gameId=${id}`);
+      return res.ok ? await res.json() : [];
+    };
+    [npcs, players, items, scenes] = await Promise.all([load('npc'), load('player'), load('item'), load('scene')]);
+    npcMap = Object.fromEntries(npcs.map(n => [n._id, n]));
+    sceneMap = Object.fromEntries(scenes.map(s => [s._id, s]));
+    playerMap = Object.fromEntries(players.map(p => [p._id, p]));
+    itemMap = Object.fromEntries(items.map(i => [i._id, i]));
+    // Keep open views in sync with the fresh data
+    if (fullscreenScene) fullscreenScene = sceneMap[fullscreenScene._id] ?? null;
+    if (selectedEntity) {
+      const maps: Record<string, Record<string, any>> = { npc: npcMap, player: playerMap, item: itemMap, scene: sceneMap };
+      const fresh = maps[selectedEntity.type][selectedEntity.entity._id];
+      selectedEntity = fresh ? { type: selectedEntity.type, entity: fresh } : null;
+    }
+  }
 
-  async function deleteContent(type: string, id: string) {
-    const token = localStorage.getItem('token');
-    if (!token) return;
-    if (!confirm('Are you sure you want to delete this?')) return;
-    await fetch(`/api/game-content?type=${type}&id=${id}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
+  async function fetchSessions() {
+    const res = await api(`/api/sessions?gameId=${id}`);
+    if (!res.ok) return;
+    sessions = await res.json();
+    if (selectedSession) {
+      const fresh = sessions.find(s => s._id === selectedSession._id);
+      selectedSession = fresh ? enrichSessionEntities(fresh) : null;
+    }
+  }
+
+  function enrichSessionEntities(session: any) {
+    const resolve = (ids: any[] = [], map: Record<string, any>) =>
+      ids.map((sid: any) => (typeof sid === 'object' ? sid : map[sid] || { _id: sid }));
+    return {
+      ...session,
+      npcs: resolve(session.connections?.npcs, npcMap),
+      scenes: resolve(session.connections?.scenes, sceneMap),
+      players: resolve(session.connections?.players, playerMap),
+      items: resolve(session.connections?.items, itemMap)
+    };
+  }
+
+  /* ---------- Connections ---------- */
+  async function post(path: string, body: object) {
+    const res = await api(path, { method: 'POST', body: JSON.stringify(body) });
+    return res.ok;
+  }
+  /** Run several connect calls, then refresh once */
+  async function connectAll(bodies: object[], failMessage: string) {
+    let failed = 0;
+    for (const b of bodies) if (!(await post('/api/game-content/connect', b))) failed++;
+    if (failed) alert(`${failMessage} (${failed} of ${bodies.length} failed)`);
+    await fetchAllContent();
+  }
+  async function disconnect(type: string, entity: any) {
+    if (!(await post('/api/game-content/disconnect', { type, fromId: entity._id }))) alert('Failed to remove link.');
+    await fetchAllContent();
+  }
+  // Used by the cards' small × buttons
+  const handleRemoveConnection = (type: string, entity: any, _targetId: string) => disconnect(type, entity);
+
+  /* ---------- Picker ---------- */
+  let picker: {
+    title: string;
+    candidates: Candidate[];
+    multiple: boolean;
+    suggestedIds: string[];
+    disabledIds: string[];
+    confirmLabel: string;
+    apply: (picked: Candidate[]) => Promise<void>;
+  } | null = null;
+
+  const as = (type: Candidate['type'], list: any[]): Candidate[] => list.map((entity) => ({ type, entity }));
+  const unassigned = (i: any) => !i.ownerPlayerId && !i.ownerNpcId && !i.sceneId;
+  /** Same group, or a scene whose location matches the group (e.g. NPCs from "Port Varrow") */
+  const related = (e: any, list: any[]) => {
+    const g = (e.group || e.location || '').trim().toLowerCase();
+    if (!g) return [];
+    return list.filter((x) => [x.group, x.location].some((v) => (v || '').trim().toLowerCase() === g)).map((x) => x._id);
+  };
+
+  function openLinker(type: ContentType, entity: any, relation: 'default' | 'items' = 'default') {
+    if (type === 'item') {
+      picker = {
+        title: `Give or place "${entity.name}"`,
+        candidates: [...as('player', players), ...as('npc', npcs), ...as('scene', scenes)],
+        multiple: false,
+        suggestedIds: [...players.map((p) => p._id), ...related(entity, [...npcs, ...scenes])],
+        disabledIds: [entity.ownerPlayerId, entity.ownerNpcId, entity.sceneId].filter(Boolean),
+        confirmLabel: 'Give',
+        apply: async ([t]) => connectAll([{ itemId: entity._id, targetType: t.type, targetId: t.entity._id }], 'Failed to move item')
+      };
+    } else if ((type === 'npc' || type === 'player') && (relation === 'items' || type === 'player')) {
+      picker = {
+        title: `Give items to ${entity.name}`,
+        candidates: as('item', items),
+        multiple: true,
+        suggestedIds: [...items.filter(unassigned).map((i) => i._id), ...related(entity, items)],
+        disabledIds: entity.itemIds ?? [],
+        confirmLabel: 'Give',
+        apply: async (picked) => connectAll(picked.map((p) => ({ itemId: p.entity._id, targetType: type, targetId: entity._id })), 'Failed to give items')
+      };
+    } else if (type === 'npc') {
+      picker = {
+        title: `Place ${entity.name} in a scene`,
+        candidates: as('scene', scenes),
+        multiple: false,
+        suggestedIds: related(entity, scenes),
+        disabledIds: entity.sceneId ? [entity.sceneId] : [],
+        confirmLabel: 'Place',
+        apply: async ([s]) => connectAll([{ npcId: entity._id, sceneId: s.entity._id }], 'Failed to place NPC')
+      };
+    } else if (type === 'scene' && relation === 'items') {
+      picker = {
+        title: `Add items to ${entity.name}`,
+        candidates: as('item', items),
+        multiple: true,
+        suggestedIds: [...items.filter(unassigned).map((i) => i._id), ...related(entity, items)],
+        disabledIds: items.filter((i) => i.sceneId === entity._id).map((i) => i._id),
+        confirmLabel: 'Add',
+        apply: async (picked) => connectAll(picked.map((p) => ({ itemId: p.entity._id, targetType: 'scene', targetId: entity._id })), 'Failed to add items')
+      };
+    } else if (type === 'scene') {
+      picker = {
+        title: `Add NPCs to ${entity.name}`,
+        candidates: as('npc', npcs),
+        multiple: true,
+        suggestedIds: related(entity, npcs),
+        disabledIds: npcs.filter((n) => n.sceneId === entity._id).map((n) => n._id),
+        confirmLabel: 'Add',
+        apply: async (picked) => connectAll(picked.map((p) => ({ npcId: p.entity._id, sceneId: entity._id })), 'Failed to add NPCs')
+      };
+    }
+  }
+
+  async function runPicker(picked: Candidate[]) {
+    const p = picker;
+    picker = null;
+    if (p && picked.length) await p.apply(picked);
+  }
+
+  /* ---------- Bulk actions from the list view ---------- */
+  async function setGroup(ids: string[], group: string) {
+    const res = await api('/api/game-content', { method: 'PATCH', body: JSON.stringify({ type: activeTab, ids, data: { group } }) });
+    if (!res.ok) alert('Failed to update group.');
+    await fetchAllContent();
+  }
+  function bulkLink(ids: string[]) {
+    const n = ids.length;
+    if (activeTab === 'npc') {
+      picker = {
+        title: `Place ${n} NPC${n === 1 ? '' : 's'} in a scene`,
+        candidates: as('scene', scenes),
+        multiple: false,
+        suggestedIds: related(npcMap[ids[0]] ?? {}, scenes),
+        disabledIds: [],
+        confirmLabel: 'Place',
+        apply: async ([s]) => connectAll(ids.map((npcId) => ({ npcId, sceneId: s.entity._id })), 'Failed to place NPCs')
+      };
+    } else if (activeTab === 'item') {
+      picker = {
+        title: `Give or place ${n} item${n === 1 ? '' : 's'}`,
+        candidates: [...as('player', players), ...as('npc', npcs), ...as('scene', scenes)],
+        multiple: false,
+        suggestedIds: players.map((p) => p._id),
+        disabledIds: [],
+        confirmLabel: 'Give',
+        apply: async ([t]) => connectAll(ids.map((itemId) => ({ itemId, targetType: t.type, targetId: t.entity._id })), 'Failed to move items')
+      };
+    }
+  }
+  async function bulkDelete(ids: string[]) {
+    let failed = 0;
+    for (const entityId of ids) {
+      const res = await api(`/api/game-content?type=${activeTab}&id=${entityId}`, { method: 'DELETE' });
+      if (!res.ok) failed++;
+    }
+    if (failed) alert(`${failed} could not be deleted.`);
     await fetchAllContent();
   }
 
-  function startCreate(type: string, data: any) {
-    editing = { type, data };
-  }
-  function stopCreate() {
-    editing = null;
-  }
-  function startConnect(type: string, data: any) {
-    connecting = { type, data };
-  }
-  function stopConnect() {
-    connecting = null;
+  async function deleteContent(type: string, entity: any) {
+    if (!confirm(`Delete "${entity.name}"? Its notes and links will be removed too.`)) return;
+    const res = await api(`/api/game-content?type=${type}&id=${entity._id}`, { method: 'DELETE' });
+    if (!res.ok) alert('Failed to delete.');
+    if (selectedEntity?.entity._id === entity._id) selectedEntity = null;
+    await fetchAllContent();
   }
 
-  async function openNotes(type: string, entityId: string) {
-    notesModal = { type, entityId, notes: [], loading: true, error: '', editingNote: null };
-    const token = localStorage.getItem('token');
+  /* ---------- Notes ---------- */
+  async function openNotes(type: string, entity: any) {
+    notesModal = { type, entityId: entity._id, name: entity.name, notes: [], loading: true, error: '', editingNote: null };
+    newNoteTitle = '';
+    newNoteText = '';
     try {
-      const res = await fetch(`/api/game-content/notes?type=${type}&entityId=${entityId}`, { headers: { 'Authorization': `Bearer ${token}` } });
-      if (res.ok) {
-        notesModal.notes = await res.json();
-      } else {
-        notesModal.error = 'Failed to load notes.';
-      }
+      const res = await api(`/api/game-content/notes?type=${type}&entityId=${entity._id}`);
+      if (res.ok) notesModal.notes = await res.json();
+      else notesModal.error = 'Failed to load notes.';
     } catch {
       notesModal.error = 'Failed to load notes.';
     }
     notesModal.loading = false;
-    newNoteTitle = '';
-    newNoteText = '';
   }
-  function closeNotes() {
-    notesModal = null;
-  }
+
   async function addNote() {
     if (!notesModal || !newNoteTitle.trim() || !newNoteText.trim()) return;
-    const token = localStorage.getItem('token');
-    const body = { type: notesModal.type, entityId: notesModal.entityId, title: newNoteTitle, text: newNoteText };
-    const res = await fetch('/api/game-content/notes', {
+    const res = await api('/api/game-content/notes', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify(body)
+      body: JSON.stringify({ type: notesModal.type, entityId: notesModal.entityId, title: newNoteTitle, text: newNoteText })
     });
     if (res.ok) {
       notesModal.notes = await res.json();
@@ -275,582 +312,423 @@ function onSessionSaved() {
       notesModal.error = 'Failed to add note.';
     }
   }
+
   async function deleteNote(noteId: string) {
-    if (!notesModal) return;
-    const token = localStorage.getItem('token');
-    const res = await fetch(`/api/game-content/notes?noteId=${noteId}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    if (res.ok) {
-      notesModal.notes = notesModal.notes.filter(n => n._id !== noteId);
-    } else {
-      notesModal.error = 'Failed to delete note.';
-    }
+    if (!notesModal || !confirm('Delete this note?')) return;
+    const res = await api(`/api/game-content/notes?noteId=${noteId}`, { method: 'DELETE' });
+    if (res.ok) notesModal.notes = notesModal.notes.filter(n => n._id !== noteId);
+    else notesModal.error = 'Failed to delete note.';
   }
-  function startEditNote(note: any) {
-    if (!notesModal) return;
-    notesModal.editingNote = { ...note };
-  }
-  function stopEditNote() {
-    if (!notesModal) return;
-    notesModal.editingNote = null;
-  }
+
   async function updateNote() {
-    if (!notesModal || !notesModal.editingNote) return;
-    const token = localStorage.getItem('token');
+    if (!notesModal?.editingNote) return;
     const { _id, title, text } = notesModal.editingNote;
-    const res = await fetch('/api/game-content/notes', {
+    const res = await api('/api/game-content/notes', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ noteId: _id, title, text })
     });
     if (res.ok) {
-      notesModal.notes = notesModal.notes.map(n => n._id === _id ? { ...n, title, text } : n);
+      notesModal.notes = notesModal.notes.map(n => (n._id === _id ? { ...n, title, text } : n));
       notesModal.editingNote = null;
     } else {
       notesModal.error = 'Failed to update note.';
     }
   }
 
-  async function connectItemTo(targetType: 'player' | 'npc' | 'scene', targetId: string, itemId?: string) {
-    // If called from drag-and-drop, itemId is provided directly; if from modal, use connecting.data._id
-    const token = localStorage.getItem('token');
-    if (!token) return;
-    if (!itemId && (!connecting || connecting.type !== 'item')) return;
-    const realItemId = itemId || (connecting && connecting.data && connecting.data._id);
-    if (!realItemId) return;
-    let url = '/api/game-content/connect';
-    let body = {
-      itemId: realItemId,
-      targetType,
-      targetId
-    };
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify(body)
-    });
-    if (res.ok) {
-      await fetchAllContent();
-      stopConnect();
-    } else {
-      alert('Failed to connect item.');
-    }
-  }
+  /* ---------- Detail view ---------- */
+  type LinkEntry = { name: string; type: string; remove: () => void };
+  type LinkSection = { label: string; type: string; entries: LinkEntry[]; action?: { label: string; run: () => void } };
 
-    // Connect NPC to Scene (location)
-  async function connectNpcToScene(npcId: string, sceneId: string) {
-    const token = localStorage.getItem('token');
-    if (!token) return;
-    const url = '/api/game-content/connect';
-    const body = { npcId, sceneId };
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify(body)
-    });
-    if (res.ok) {
-      await fetchAllContent();
-      stopConnect();
-    } else {
-      alert('Failed to connect NPC to scene.');
-    }
-  }
-
-  // Handler for removing connections from EntityCardList and sections
-  function onRemoveConnection(type: string, entity: any, targetId: string) {
-    handleRemoveConnection(type, entity, targetId);
+  /** Linked things shown in the detail view, each with a remove button and an "add" action */
+  function linksFor(sel: { type: ContentType; entity: any }): LinkSection[] {
+    const e = sel.entity;
+    const item = (i: string, kind: string): LinkEntry => ({ name: itemMap[i]?.name ?? 'Unknown', type: 'item', remove: () => disconnect(kind, { _id: i }) });
+    if (sel.type === 'npc') return [
+      {
+        label: 'Location', type: 'scene',
+        entries: e.sceneId ? [{ name: sceneMap[e.sceneId]?.name ?? 'Unknown', type: 'scene', remove: () => disconnect('npc-scene', e) }] : [],
+        action: { label: e.sceneId ? 'Move…' : 'Place in scene…', run: () => openLinker('npc', e) }
+      },
+      { label: 'Carries', type: 'item', entries: (e.itemIds ?? []).map((i: string) => item(i, 'item-npc')), action: { label: '+ Give items…', run: () => openLinker('npc', e, 'items') } }
+    ];
+    if (sel.type === 'player') return [
+      { label: 'Carries', type: 'item', entries: (e.itemIds ?? []).map((i: string) => item(i, 'item-player')), action: { label: '+ Give items…', run: () => openLinker('player', e) } }
+    ];
+    if (sel.type === 'scene') return [
+      {
+        label: 'NPCs here', type: 'npc',
+        entries: npcs.filter((n) => n.sceneId === e._id).map((n) => ({ name: n.name, type: 'npc', remove: () => disconnect('npc-scene', n) })),
+        action: { label: '+ Add NPCs…', run: () => openLinker('scene', e) }
+      },
+      {
+        label: 'Items here', type: 'item',
+        entries: items.filter((i) => i.sceneId === e._id).map((i) => ({ name: i.name, type: 'item', remove: () => disconnect('item-scene', i) })),
+        action: { label: '+ Add items…', run: () => openLinker('scene', e, 'items') }
+      }
+    ];
+    const holder =
+      e.ownerPlayerId ? { name: playerMap[e.ownerPlayerId]?.name, type: 'player', kind: 'item-player', label: 'Owned by' }
+      : e.ownerNpcId ? { name: npcMap[e.ownerNpcId]?.name, type: 'npc', kind: 'item-npc', label: 'Owned by' }
+      : e.sceneId ? { name: sceneMap[e.sceneId]?.name, type: 'scene', kind: 'item-scene', label: 'Location' }
+      : null;
+    return [{
+      label: holder?.label ?? 'Owner or location', type: holder?.type ?? 'player',
+      entries: holder ? [{ name: holder.name ?? 'Unknown', type: holder.type, remove: () => disconnect(holder.kind, e) }] : [],
+      action: { label: holder ? 'Change…' : 'Give / place…', run: () => openLinker('item', e) }
+    }];
   }
 </script>
 
+<svelte:head>
+  <title>{game ? `${game.name} · ` : ''}DnD Session Manager</title>
+</svelte:head>
 
-<main class="game-layout">
-  <aside class="sidebar">
-    {#if loading}
-      <p>Loading...</p>
-    {:else if error}
-      <p class="error">{error}</p>
-    {:else if game}
-      <div class="sidebar-header">
-        <h2>{game.name}</h2>
-        <p class="sidebar-desc">{game.description}</p>
+<main class="page">
+  {#if loading}
+    <p class="muted">Loading…</p>
+  {:else if error}
+    <a href="/my-games" class="back-link">← My games</a>
+    <div class="alert alert-error" role="alert">{error}</div>
+  {:else if game}
+    <a href="/my-games" class="back-link">← My games</a>
+    <header class="page-header">
+      <div>
+        <h1>{game.name}</h1>
+        {#if game.description}<p class="muted lead">{game.description}</p>{/if}
       </div>
-      <SidebarSessions
-        {sessionHistory}
-        {upcomingSessions}
-        selectedSessionId={selectedSession?._id}
-        on:createSession={() => window.location.href = `/session/new?gameId=${id}`}
-        on:selectSession={e => selectedSession = enrichSessionEntities(e.detail)}
-      />
-      {#if selectedSession}
-        <SessionDetailsBox
-          session={selectedSession}
-          show={showSessionDetails}
-          edit={editSessionDetails}
-          editData={editSessionData}
-          onEdit={() => { editSessionDetails = true; editSessionData = JSON.parse(JSON.stringify(selectedSession)); }}
-          onSave={saveSessionEdit}
-          onCancel={() => editSessionDetails = false}
-          onToggle={() => showSessionDetails = !showSessionDetails}
-          onClose={() => { selectedSession = null; }}
+    </header>
+
+    <div class="game-grid">
+      <aside class="game-sidebar">
+        <SidebarSessions
+          {sessions}
+          selectedSessionId={selectedSession?._id}
+          on:createSession={() => goto(`/session/new?gameId=${id}`)}
+          on:selectSession={e => selectedSession = enrichSessionEntities(e.detail)}
         />
-      {/if}
+      </aside>
 
-
-
-    {/if}
-  </aside>
-  <section class="main-content">
-    {#if game}
-      <nav class="tab-nav">
-        <button class:active-tab={activeTab === 'scene'} on:click={() => activeTab = 'scene'}>Scenes</button>
-        <button class:active-tab={activeTab === 'npc'} on:click={() => activeTab = 'npc'}>NPCs</button>
-        <button class:active-tab={activeTab === 'player'} on:click={() => activeTab = 'player'}>Players</button>
-        <button class:active-tab={activeTab === 'item'} on:click={() => activeTab = 'item'}>Items</button>
-      </nav>
-
-      {#if showConnectionBox}
-        <div style="position:relative;">
-          <button class="close-connection-box-btn" on:click={() => showConnectionBox = false} title="Close connection box">×</button>
-          <ConnectionBox
-            {npcs}
-            {players}
-            {items}
-            {scenes}
-            onConnect={handleDragConnect}
-          />
-        </div>
-      {:else}
-        <button class="open-connection-box-btn" on:click={() => showConnectionBox = true} title="Show connection box">Show Connection Box</button>
-      {/if}
-
-      {#if fullscreenScene}
-        <SceneFullscreenView
-          scene={fullscreenScene}
-          npcs={npcs.filter((n: any) => n.sceneId === fullscreenScene._id)}
-          items={items.filter((i: any) => i.sceneId === fullscreenScene._id)}
-          players={players}
-          on:close={closeFullscreenScene}
-        />
-      {/if}
-      {#if selectedEntity}
-        <div class="connection-line-view">
-          <button class="close-btn" on:click={closeConnectionView}>×</button>
-          <h3>Connections for {selectedEntity.entity.name} <span class="type-label">[{selectedEntity.type}]</span></h3>
-          <div class="conn-section">
-            {#if selectedEntity.type === 'npc'}
-              <div><strong>Scene:</strong> {sceneMap[selectedEntity.entity.sceneId]?.name || selectedEntity.entity.sceneId}</div>
-              <div><strong>Items:</strong>
-                {#each selectedEntity.entity.itemIds as itemId}
-                  <span class="chip">{itemMap[itemId]?.name || itemId}</span>
-                {/each}
-              </div>
-            {/if}
-            {#if selectedEntity.type === 'player'}
-              <div><strong>Items:</strong>
-                {#each selectedEntity.entity.itemIds as itemId}
-                  <span class="chip">{itemMap[itemId]?.name || itemId}</span>
-                {/each}
-              </div>
-            {/if}
-            {#if selectedEntity.type === 'item'}
-              <div><strong>Owner:</strong>
-                {#if selectedEntity.entity.ownerPlayer}
-                  Player: {playerMap[selectedEntity.entity.ownerPlayer]? playerMap[selectedEntity.entity.ownerPlayer].name : selectedEntity.entity.ownerPlayer}
-                {:else if selectedEntity.entity.ownerNpc}
-                  NPC: {npcMap[selectedEntity.entity.ownerNpc]?.name || selectedEntity.entity.ownerNpc}
-                {:else if selectedEntity.entity.sceneId}
-                  Scene: {sceneMap[selectedEntity.entity.sceneId]?.name || selectedEntity.entity.sceneId}
-                {:else}
-                  None
-                {/if}
-              </div>
-            {/if}
+      <section class="game-main">
+        <div class="tab-bar">
+          <div class="tabs" role="tablist" aria-label="Game content">
+            {#each TABS as tab}
+              <button
+                class="tab"
+                role="tab"
+                data-type={tab.type}
+                aria-selected={activeTab === tab.type}
+                on:click={() => switchTab(tab.type)}
+              >
+                <span class="dot"></span>{tab.label}<span class="badge">{lists[tab.type].length}</span>
+              </button>
+            {/each}
           </div>
+          <button class="btn btn-primary btn-sm new-btn" on:click={() => (creatingType = activeTab)}>
+            + New {activeLabel.one}
+          </button>
         </div>
-      {/if}
 
-      {#if !selectedEntity && activeTab === 'scene'}
-        <SceneSection
-          {scenes}
-          {startCreate}
-          {startConnect}
-          {openNotes}
-          {deleteContent}
-          onRemoveConnection={handleRemoveConnection}
-          itemMap={itemMap}
-          npcMap={npcMap}
-          sceneMap={sceneMap}
-          on:entityClick={e => handleEntityClick('scene', e.detail)}
-        />
-      {/if}
-      {#if !selectedEntity && activeTab === 'npc'}
-        <NpcSection
-          {npcs}
-          {startCreate}
-          {startConnect}
-          {openNotes}
-          {deleteContent}
-          onRemoveConnection={handleRemoveConnection}
-          itemMap={itemMap}
-          npcMap={npcMap}
-          sceneMap={sceneMap}
-          on:entityClick={e => handleEntityClick('npc', e.detail)}
-        />
-      {/if}
-      {#if !selectedEntity && activeTab === 'player'}
-        <PlayerSection
-          {players}
-          {startCreate}
-          {startConnect}
-          {openNotes}
-          {deleteContent}
-          onRemoveConnection={handleRemoveConnection}
-          itemMap={itemMap}
-          npcMap={npcMap}
-          sceneMap={sceneMap}
-          on:entityClick={e => handleEntityClick('player', e.detail)}
-        />
-      {/if}
-      {#if !selectedEntity && activeTab === 'item'}
-        <ItemSection
-          {items}
-          {startCreate}
-          {startConnect}
-          {openNotes}
-          {deleteContent}
-          onRemoveConnection={handleRemoveConnection}
-          itemMap={itemMap}
-          npcMap={npcMap}
-          sceneMap={sceneMap}
-          on:entityClick={e => handleEntityClick('item', e.detail)}
-        />
-      {/if}
-      {#if editing}
-        <div class="modal">
-          <div class="modal-content">
-            <h4>Edit {editing.type.charAt(0).toUpperCase() + editing.type.slice(1)}</h4>
-            <GameContentForm type={editing.type as "scene" | "npc" | "player" | "item"} gameId={id} connections={{}} on:created={() => { fetchAllContent(); stopCreate(); }} />
-            <button on:click={stopCreate}>Cancel</button>
-          </div>
+        <div role="tabpanel">
+          {#key activeTab}
+            <EntityBrowser
+              type={activeTab}
+              entities={lists[activeTab]}
+              {itemMap}
+              {npcMap}
+              {sceneMap}
+              {playerMap}
+              {allGroups}
+              bind:groupFilter
+              onOpen={(e) => (selectedEntity = { type: activeTab, entity: e })}
+              onOpenMap={(e) => (fullscreenScene = e)}
+              onNotes={(e) => openNotes(activeTab, e)}
+              onDelete={(e) => deleteContent(activeTab, e)}
+              onCreate={() => (creatingType = activeTab)}
+              onLink={(e) => openLinker(activeTab, e)}
+              onRemoveConnection={handleRemoveConnection}
+              onSetGroup={setGroup}
+              onBulkLink={bulkLink}
+              onBulkDelete={bulkDelete}
+            />
+          {/key}
         </div>
-      {/if}
-      {#if connecting}
-        <div class="modal">
-          <div class="modal-content">
-            <h4>Connect {connecting.type.charAt(0).toUpperCase() + connecting.type.slice(1)}</h4>
-            {#if connecting.type === 'item'}
-              <div style="margin-bottom:1em">
-                <div>Choose new owner for this item:</div>
-                <div style="margin:0.7em 0">
-                  <strong>Players:</strong>
-                  {#each players as player}
-                    <button style="margin:0.2em" on:click={() => connectItemTo('player', player._id)}>{player.name}</button>
-                  {/each}
-                </div>
-                <div style="margin:0.7em 0">
-                  <strong>NPCs:</strong>
-                  {#each npcs as npc}
-                    <button style="margin:0.2em" on:click={() => connectItemTo('npc', npc._id)}>{npc.name}</button>
-                  {/each}
-                </div>
-              </div>
-            {:else if connecting.type === 'npc'}
-              <div style="margin-bottom:1em">
-                <div>Choose a Scene for this NPC:</div>
-                <div style="margin:0.7em 0">
-                  <strong>Scenes:</strong>
-                  {#each scenes as scene}
-                    <button style="margin:0.2em" on:click={() => connecting && connectNpcToScene(connecting.data._id, scene._id)}>{scene.name}</button>
-                  {/each}
-                </div>
-              </div>
-            {:else if connecting.type === 'scene'}
-              <div style="margin-bottom:1em">
-                <div>Add NPCs to this Scene:</div>
-                <div style="margin:0.7em 0">
-                  <strong>NPCs:</strong>
-                  {#each npcs as npc}
-                    <button style="margin:0.2em" on:click={() => connecting && connectNpcToScene(npc._id, connecting.data._id)}>{npc.name}</button>
-                  {/each}
-                </div>
-              </div>
-            {:else}
-              <em>Connection UI coming soon...</em>
-            {/if}
-
-            <button on:click={stopConnect}>Close</button>
-          </div>
-        </div>
-      {/if}
-
-
-      {#if notesModal}
-        <div class="modal">
-          <div class="modal-content notes-modal">
-            <h4>Notes</h4>
-            {#if notesModal.loading}
-              <p>Loading...</p>
-            {:else}
-              <div class="notes-list">
-                {#each notesModal.notes as note}
-                  <div class="note-card">
-                    {#if notesModal.editingNote && notesModal.editingNote._id === note._id}
-                      <input type="text" bind:value={notesModal.editingNote.title} placeholder="Title" />
-                      <textarea rows="2" bind:value={notesModal.editingNote.text} placeholder="Note text"></textarea>
-                      <button on:click={updateNote}>Save</button>
-                      <button on:click={stopEditNote}>Cancel</button>
-                    {:else}
-                      <div class="note-title">{note.title}</div>
-                      <div class="note-text">{note.text}</div>
-                      <div class="note-actions">
-                        <button on:click={() => startEditNote(note)}>Edit</button>
-                        <button on:click={() => deleteNote(note._id)}>Delete</button>
-                      </div>
-                    {/if}
-                  </div>
-                {/each}
-              </div>
-              <div class="add-note-form">
-                <input type="text" bind:value={newNoteTitle} placeholder="Title" />
-                <textarea rows="2" bind:value={newNoteText} placeholder="Note text"></textarea>
-                <button on:click={addNote}>Add Note</button>
-              </div>
-              {#if notesModal.error}
-                <div class="error">{notesModal.error}</div>
-              {/if}
-            {/if}
-            <button style="margin-top:1em" on:click={closeNotes}>Close</button>
-          </div>
-        </div>
-      {/if}
-    {/if}
-
-  </section>
+      </section>
+    </div>
+  {/if}
 </main>
 
+{#if fullscreenScene}
+  <SceneFullscreenView
+    scene={fullscreenScene}
+    npcs={npcs.filter((n) => n.sceneId === fullscreenScene._id)}
+    items={items.filter((i) => i.sceneId === fullscreenScene._id)}
+    {players}
+    allNpcs={npcs}
+    on:close={() => (fullscreenScene = null)}
+    on:changed={fetchAllContent}
+  />
+{/if}
+
+{#if selectedSession}
+  {#key selectedSession._id}
+    <SessionDetailsBox
+      session={selectedSession}
+      onClose={() => { selectedSession = null; }}
+      onChanged={fetchSessions}
+    />
+  {/key}
+{/if}
+
+{#if creatingType}
+  <Modal title={`New ${TABS.find(t => t.type === creatingType)?.one}`} onClose={() => (creatingType = null)}>
+    <GameContentForm
+      type={creatingType}
+      gameId={id}
+      groups={allGroups}
+      defaultGroup={groupFilter && groupFilter !== '__none__' ? groupFilter : ''}
+      on:created={() => { fetchAllContent(); creatingType = null; }}
+      on:cancel={() => (creatingType = null)}
+    />
+  </Modal>
+{/if}
+
+{#if editing}
+  <Modal title={`Edit ${editing.entity.name}`} onClose={() => (editing = null)}>
+    <GameContentForm
+      type={editing.type}
+      gameId={id}
+      entity={editing.entity}
+      groups={allGroups}
+      on:saved={() => { fetchAllContent(); editing = null; }}
+      on:cancel={() => (editing = null)}
+    />
+  </Modal>
+{/if}
+
+{#if selectedEntity && !editing}
+  {@const sel = selectedEntity}
+  {@const e = sel.entity}
+  <Modal title={e.name} onClose={() => (selectedEntity = null)}>
+    <span slot="eyebrow" class="eyebrow type-eyebrow" data-type={sel.type}>
+      <span class="dot"></span>{ONE[sel.type]}
+      {#if e.group}<span class="badge group-badge">{e.group}</span>{/if}
+    </span>
+    <div class="stack-lg">
+      {#if e.description}<p class="detail-desc">{e.description}</p>{/if}
+      <dl class="detail-facts">
+        {#each FIELDS[sel.type] as [key, label]}
+          <div><dt>{label}</dt><dd class:faint={!e[key]}>{e[key] || '–'}</dd></div>
+        {/each}
+      </dl>
+      {#each linksFor(sel) as link}
+        <section class="stack link-section" data-type={link.type}>
+          <div class="link-head">
+            <h3 class="eyebrow">{link.label}</h3>
+            {#if link.action}<button class="btn btn-outline btn-sm" on:click={link.action.run}>{link.action.label}</button>{/if}
+          </div>
+          <div class="row">
+            {#each link.entries as entry}
+              <span class="chip" data-type={entry.type}>
+                <span class="dot"></span><span class="chip-label">{entry.name}</span>
+                <button class="chip-remove" aria-label={`Remove ${entry.name}`} title="Remove link" on:click={entry.remove}>×</button>
+              </span>
+            {:else}
+              <span class="faint small">None yet.</span>
+            {/each}
+          </div>
+        </section>
+      {/each}
+      <section class="stack">
+        <h3 class="eyebrow">Appears in {appearances.length} {appearances.length === 1 ? 'session' : 'sessions'}</h3>
+        {#if appearances.length === 0}
+          <span class="faint small">Not linked to any session yet.</span>
+        {:else}
+          <ul class="appearances">
+            {#each showAllAppearances ? appearances : appearances.slice(0, 5) as s (s._id)}
+              <li>
+                <button class="appearance" on:click={() => { selectedEntity = null; selectedSession = enrichSessionEntities(s); }}>
+                  <span class="title">{s.title}</span>
+                  <span class="faint small">{formatSessionDate(s)}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+          {#if appearances.length > 5 && !showAllAppearances}
+            <button class="btn btn-ghost btn-sm more" on:click={() => (showAllAppearances = true)}>Show all {appearances.length}</button>
+          {/if}
+        {/if}
+      </section>
+    </div>
+    <svelte:fragment slot="footer">
+      <button class="btn btn-danger" on:click={() => deleteContent(sel.type, e)}>Delete</button>
+      <span class="spacer"></span>
+      <button class="btn btn-ghost" on:click={() => openNotes(sel.type, e)}>Notes</button>
+      <button class="btn btn-outline" on:click={() => (editing = { type: sel.type, entity: e })}>Edit</button>
+      {#if sel.type === 'scene'}
+        <button class="btn btn-primary" on:click={() => { fullscreenScene = e; selectedEntity = null; }}>Open map</button>
+      {/if}
+    </svelte:fragment>
+  </Modal>
+{/if}
+
+{#if picker}
+  <EntityPicker
+    title={picker.title}
+    candidates={picker.candidates}
+    multiple={picker.multiple}
+    suggestedIds={picker.suggestedIds}
+    disabledIds={picker.disabledIds}
+    confirmLabel={picker.confirmLabel}
+    onConfirm={runPicker}
+    onClose={() => (picker = null)}
+  />
+{/if}
+
+{#if notesModal}
+  <Modal title={`Notes · ${notesModal.name}`} onClose={() => (notesModal = null)}>
+    <div class="stack-lg">
+      {#if notesModal.error}<div class="alert alert-error" role="alert">{notesModal.error}</div>{/if}
+
+      <form class="note-form card" on:submit|preventDefault={addNote}>
+        <input class="input" type="text" placeholder="Title" bind:value={newNoteTitle} />
+        <textarea class="input" rows="3" placeholder="What should you remember?" bind:value={newNoteText}></textarea>
+        <div class="row-end">
+          <button type="submit" class="btn btn-primary btn-sm" disabled={!newNoteTitle.trim() || !newNoteText.trim()}>Add note</button>
+        </div>
+      </form>
+
+      {#if notesModal.loading}
+        <p class="muted">Loading…</p>
+      {:else if notesModal.notes.length === 0}
+        <p class="faint small">No notes yet.</p>
+      {:else}
+        <ul class="note-list">
+          {#each notesModal.notes as note (note._id)}
+            <li class="note">
+              {#if notesModal.editingNote?._id === note._id}
+                <form class="stack" on:submit|preventDefault={updateNote}>
+                  <input class="input" type="text" bind:value={notesModal.editingNote.title} />
+                  <textarea class="input" rows="3" bind:value={notesModal.editingNote.text}></textarea>
+                  <div class="row-end">
+                    <button type="button" class="btn btn-ghost btn-sm" on:click={() => notesModal && (notesModal.editingNote = null)}>Cancel</button>
+                    <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                  </div>
+                </form>
+              {:else}
+                <div class="note-head">
+                  <h3>{note.title}</h3>
+                  <div class="row">
+                    <button class="btn btn-ghost btn-sm" on:click={() => notesModal && (notesModal.editingNote = { ...note })}>Edit</button>
+                    <button class="btn btn-danger btn-sm" on:click={() => deleteNote(note._id)}>Delete</button>
+                  </div>
+                </div>
+                <p class="muted note-text">{note.text}</p>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  </Modal>
+{/if}
 
 <style>
-.game-layout {
-  display: flex;
-  flex-direction: row;
-  gap: 2.5em;
-  align-items: flex-start;
-  max-width: 1200px;
-  margin: 2rem auto;
-  background-color: var(--color-bg-secondary);
-  border-radius: 1.2em;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.10);
-}
-.sidebar {
-  flex: 1 1 320px;
-  min-width: 260px;
-  max-width: 350px;
-  background: var(--color-bg-main);
-  border-radius: 1.2em 0 0 1.2em;
-  box-shadow: 0 1px 8px rgba(0,0,0,0.10);
-  padding: 2em 1.2em 1.2em 1.2em;
-  display: flex;
-  flex-direction: column;
-  gap: 2em;
-}
-.sidebar-header {
-  margin-bottom: 1.5em;
-}
-.sidebar-header h2 {
-  font-size: 1.5em;
-  color: var(--color-text-accent);
-  margin-bottom: 0.3em;
-}
-.sidebar-desc {
-  color: var(--color-text-secondary);
-  font-size: 1.05em;
-  margin-bottom: 1em;
-}
+  /* Sidebar : content = 1 : φ² (≈ 27.6% / 72.4%) */
+  .game-grid {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) minmax(0, 2.618fr);
+    gap: var(--sp-6);
+    align-items: start;
+  }
+  .game-sidebar {
+    position: sticky;
+    top: calc(var(--sp-7) + var(--sp-5));
+    max-height: calc(100vh - var(--sp-7) - 2 * var(--sp-5));
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+  .game-main {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-5);
+    min-width: 0;
+  }
 
-.main-content {
-  flex: 2 1 0%;
-  min-width: 0;
-  padding: 2em 1.5em 2em 0;
-}
-.tab-nav {
-  display: flex;
-  gap: 1.2em;
-  margin-bottom: 2em;
-  justify-content: flex-start;
-  background: var(--color-bg-main);
-  border-radius: 8px;
-  padding: 0.7em 0.5em;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.08);
-}
-.tab-nav button {
-  background: none;
-  color: var(--color-text-main);
-  border: none;
-  font-size: 1.08em;
-  padding: 0.3em 1.2em;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.tab-nav button.active-tab,
-.tab-nav button:hover {
-  background: var(--color-bg-button);
-  color: var(--color-text-main);
-}
-.modal {
-  position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: var(--color-bg-modal);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-.modal-content {
-  background: var(--color-bg-secondary);
-  border-radius: 10px;
-  padding: 2em 2.5em 1.5em 2.5em;
-  min-width: 320px;
-  max-width: 95vw;
-  box-shadow: 0 2px 16px rgba(0,0,0,0.25);
-  color: var(--color-text-main);
-  text-align: center;
-}
-.error {
-  color: var(--color-text-warning);
-  text-align: center;
-}
-.notes-modal {
-  min-width: 350px;
-  max-width: 600px;
-}
-.notes-list {
-  margin-bottom: 1.2em;
-}
-.note-card {
-  background: var(--color-bg-main);
-  border-radius: 6px;
-  padding: 0.7em 1em 0.5em 1em;
-  margin-bottom: 0.7em;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
-.note-title {
-  font-weight: bold;
-  font-size: 1.05em;
-  margin-bottom: 0.2em;
-}
-.note-text {
-  color: var(--color-text-secondary);
-  font-size: 0.98em;
-  margin-bottom: 0.3em;
-}
-.note-actions {
-  display: flex;
-  gap: 0.5em;
-}
-.add-note-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4em;
-  margin-top: 1em;
-}
-.add-note-form input, .add-note-form textarea {
-  background: var(--color-bg-secondary);
-  color: var(--color-text-main);
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  padding: 0.4em;
-}
-.add-note-form button {
-  background: var(--color-bg-button);
-  color: var(--color-text-main);
-  border: none;
-  border-radius: 4px;
-  padding: 0.4em 1em;
-  cursor: pointer;
-  font-size: 1em;
-  margin-top: 0.2em;
-}
-.add-note-form button:hover {
-  background: var(--color-bg-button-hover);
-}
-:global(.game-section h3){
-  color: var(--color-text-accent);
-  margin-bottom: 0.8em;
-}
+  .tab-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-4);
+    border-bottom: 1px solid var(--border);
+  }
+  .tab-bar .tabs { flex: 1; border-bottom: none; }
+  .new-btn { flex: none; }
 
+  .type-eyebrow { display: inline-flex; align-items: center; gap: var(--sp-2); }
+  .group-badge { margin-left: var(--sp-2); text-transform: none; letter-spacing: 0; }
+  .detail-desc { white-space: pre-wrap; }
+  .detail-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(144px, 1fr));
+    gap: var(--sp-4);
+    margin: 0;
+  }
+  .detail-facts dt { font-size: var(--fs-xs); color: var(--text-faint); }
+  .detail-facts dd { margin: 0; font-weight: 600; }
+  .link-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+  .spacer { flex: 1; }
 
-.connection-line-view {
-  position: fixed;
-  top: 2em;
-  right: 2em;
-  background: var(--color-bg-main);
-  border-radius: 12px;
-  box-shadow: 0 2px 16px rgba(0,0,0,0.18);
-  padding: 2em 2.5em 1.5em 2.5em;
-  min-width: 340px;
-  max-width: 420px;
-  z-index: 1200;
-  color: var(--color-text-main);
-}
-.connection-line-view h3 {
-  color: var(--color-text-accent);
-  margin-bottom: 1em;
-}
-.connection-line-view .type-label {
-  font-size: 0.9em;
-  color: var(--color-text-secondary);
-  margin-left: 0.5em;
-}
-.connection-line-view .conn-section {
-  display: flex;
-  flex-direction: column;
-  gap: 1em;
-}
-.connection-line-view .chip {
-  background: var(--color-bg-button);
-  color: var(--color-text-accent);
-  border-radius: 12px;
-  padding: 0.15em 0.7em;
-  font-size: 0.92em;
-  display: inline-block;
-  margin-right: 0.2em;
-}
-.connection-line-view .close-btn {
-  position: absolute;
-  top: 0.7em;
-  right: 1em;
-  background: none;
-  border: none;
-  color: var(--color-text-accent);
-  font-size: 1.5em;
-  cursor: pointer;
-}
+  .appearances { display: flex; flex-direction: column; gap: var(--sp-1); margin: 0; padding: 0; list-style: none; }
+  .appearance {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--sp-4);
+    width: 100%;
+    padding: var(--sp-2) var(--sp-3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: none;
+    text-align: left;
+    cursor: pointer;
+  }
+  .appearance:hover { background: var(--surface-2); }
+  .appearance .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .more { align-self: flex-start; }
 
-.close-connection-box-btn {
-  position: absolute;
-  top: 0.5em;
-  right: 0.5em;
-  background: none;
-  border: none;
-  color: var(--color-text-accent);
-  font-size: 1.5em;
-  cursor: pointer;
-  z-index: 10;
-}
-.open-connection-box-btn {
-  background: var(--color-bg-button);
-  color: var(--color-text-main);
-  border: none;
-  border-radius: 6px;
-  padding: 0.5em 1.2em;
-  font-size: 1em;
-  margin-bottom: 1em;
-  cursor: pointer;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
-  
+  .note-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    padding: var(--sp-4);
+    background: var(--surface-2);
+  }
+  .note-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .note {
+    padding: var(--sp-4);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+  }
+  .note-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+  }
+  .note-head h3 { font-size: var(--fs-base); }
+  .note-text { margin-top: var(--sp-2); white-space: pre-wrap; }
 
+  @media (max-width: 987px) {
+    .game-grid { grid-template-columns: 1fr; }
+    .game-sidebar { position: static; order: 2; max-height: none; }
+  }
+  @media (max-width: 610px) {
+    .tab-bar { flex-direction: column; align-items: stretch; gap: var(--sp-3); }
+    .new-btn { order: -1; }
+  }
 </style>

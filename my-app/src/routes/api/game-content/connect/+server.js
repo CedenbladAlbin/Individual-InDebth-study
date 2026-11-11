@@ -1,40 +1,35 @@
-
-import { PlayerOwnsItem } from '$lib/models/player.js';
-import { NpcOwnsItem, NpcExistsInScene } from '$lib/models/npc.js';
-import { ItemInScene } from '$lib/models/item.js';
+import { json, error } from '@sveltejs/kit';
+import { getDb } from '$lib/server/db.js';
+import { requireUser, requireEntity, readJson } from '$lib/server/access.js';
+import { attachItem } from '$lib/server/content.js';
 
 /**
- * @param {{ request: Request }} param0
- * @returns {Promise<Response>}
+ * POST /api/game-content/connect
+ * body: { itemId, targetType: 'player' | 'npc' | 'scene', targetId }  — move an item
+ *    or { npcId, sceneId }                                             — place an NPC in a scene
+ * @type {import('./$types').RequestHandler}
  */
+export async function POST({ request, locals }) {
+  const userId = requireUser(locals);
+  const body = await readJson(request);
+  const db = await getDb();
 
-export async function POST({ request }) {
-  const body = await request.json();
-  // Item connection
-  if (body.itemId && body.targetType && body.targetId) {
-    try {
-      if (body.targetType === 'player') {
-        await PlayerOwnsItem(body.targetId, body.itemId);
-      } else if (body.targetType === 'npc') {
-        await NpcOwnsItem(body.targetId, body.itemId);
-      } else if (body.targetType === 'scene') {
-        await ItemInScene(body.itemId, body.targetId);
-      } else {
-        return new Response('Invalid targetType', { status: 400 });
-      }
-      return new Response(JSON.stringify({ success: true }), { status: 200 });
-    } catch (e) {
-      return new Response('Failed to connect item', { status: 500 });
-    }
+  if (body.itemId) {
+    if (!['player', 'npc', 'scene'].includes(body.targetType)) error(400, 'Invalid targetType');
+    const item = await requireEntity('item', body.itemId, userId);
+    const target = await requireEntity(body.targetType, body.targetId, userId);
+    if (String(item.gameId) !== String(target.gameId)) error(400, 'Entities belong to different games');
+    await attachItem(db, item, body.targetType, target);
+    return json({ success: true });
   }
-  // NPC to Scene connection
-  if (body.npcId && body.sceneId) {
-    try {
-      await NpcExistsInScene(body.npcId, body.sceneId);
-      return new Response(JSON.stringify({ success: true }), { status: 200 });
-    } catch (e) {
-      return new Response('Failed to connect NPC to scene', { status: 500 });
-    }
+
+  if (body.npcId) {
+    const npc = await requireEntity('npc', body.npcId, userId);
+    const scene = await requireEntity('scene', body.sceneId, userId);
+    if (String(npc.gameId) !== String(scene.gameId)) error(400, 'Entities belong to different games');
+    await db.collection('npcs').updateOne({ _id: npc._id }, { $set: { sceneId: scene._id } });
+    return json({ success: true });
   }
-  return new Response('Missing or invalid fields', { status: 400 });
+
+  error(400, 'Missing or invalid fields');
 }

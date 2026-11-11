@@ -1,31 +1,26 @@
-import { RemoveItemFromPlayer } from '$lib/models/player.js';
-import { RemoveItemFromNpc, RemoveNpcFromScene } from '$lib/models/npc.js';
-import { RemoveItemFromScene } from '$lib/models/item.js';
+import { json, error } from '@sveltejs/kit';
+import { getDb } from '$lib/server/db.js';
+import { requireUser, requireEntity, readJson } from '$lib/server/access.js';
+import { detachItem } from '$lib/server/content.js';
 
 /**
- * Remove a connection between entities (item/player/npc/scene)
- * POST with JSON: { type, fromId, toId }
+ * POST /api/game-content/disconnect
+ * body: { type: 'item-player' | 'item-npc' | 'item-scene' | 'npc-scene', fromId }
+ * fromId is the item (item-*) or the NPC (npc-scene).
+ * @type {import('./$types').RequestHandler}
  */
+export async function POST({ request, locals }) {
+  const userId = requireUser(locals);
+  const { type, fromId } = await readJson(request);
+  const db = await getDb();
 
-/** @param {{ request: Request }} param0
- * @returns {Promise<Response>}
- */
-export async function POST({ request }) {
-  const body = await request.json();
-  try {
-    if (body.type === 'item-player') {
-      await RemoveItemFromPlayer(body.toId, body.fromId); // fromId = item, toId = player
-    } else if (body.type === 'item-npc') {
-      await RemoveItemFromNpc(body.toId, body.fromId); // fromId = item, toId = npc
-    } else if (body.type === 'item-scene') {
-      await RemoveItemFromScene(body.toId, body.fromId); // fromId = item, toId = scene
-    } else if (body.type === 'npc-scene') {
-      await RemoveNpcFromScene(body.fromId); // fromId = npc
-    } else {
-      return new Response('Invalid type', { status: 400 });
-    }
-    return new Response(JSON.stringify({ success: true }), { status: 200 });
-  } catch (e) {
-    return new Response('Failed to remove connection', { status: 500 });
+  if (type === 'item-player' || type === 'item-npc' || type === 'item-scene') {
+    await detachItem(db, await requireEntity('item', fromId, userId));
+  } else if (type === 'npc-scene') {
+    const npc = await requireEntity('npc', fromId, userId);
+    await db.collection('npcs').updateOne({ _id: npc._id }, { $set: { sceneId: null } });
+  } else {
+    error(400, 'Invalid type');
   }
+  return json({ success: true });
 }

@@ -1,385 +1,314 @@
 <script lang="ts">
+  import { api } from '$lib/api';
+  import Modal from '$lib/Modal.svelte';
+  import { formatSessionDate, toDateInput } from '$lib/sessions';
+
   export let session: any;
-  export let show: boolean = true;
-  export let edit: boolean = false;
-  export let editData: any = {};
-  export let onEdit: () => void;
-  export let onSave: () => void;
-  export let onCancel: () => void;
-  export let onToggle: () => void;
   export let onClose: () => void;
+  /** Called after the session was changed or deleted on the server, so the parent can reload. */
+  export let onChanged: () => void;
 
-  let activeTab: 'overview' | 'entities' | 'notes' | 'advanced' = 'overview';
-
-  import { goto } from '$app/navigation';
+  type Tab = 'overview' | 'entities' | 'notes' | 'more';
+  const TABS: [Tab, string][] = [['overview', 'Overview'], ['entities', 'Linked'], ['notes', 'Notes'], ['more', 'More']];
+  let activeTab: Tab = 'overview';
 
   let noteInput = '';
   let loading = false;
   let errorMsg = '';
-  let showAddNote = false;
 
-  async function markEnded() {
+  let edit = false;
+  let editData = { title: '', date: '', summary: '', plotDevelopments: '', xp: 0, nextPlans: '' };
+
+  const MORE_FIELDS: [string, string][] = [
+    ['quests', 'Quests'], ['loot', 'Loot'], ['secrets', 'Secrets'], ['factions', 'Factions'],
+    ['mysteries', 'Mysteries'], ['goals', 'Goals'], ['downtime', 'Downtime'], ['nextPlans', 'Next session plans']
+  ];
+  const LINKED: [string, string, string][] = [
+    ['scenes', 'Scenes', 'scene'], ['npcs', 'NPCs', 'npc'], ['players', 'Players', 'player'], ['items', 'Items', 'item']
+  ];
+
+  $: customNotes = Array.isArray(session.notes?.custom)
+    ? session.notes.custom
+    : session.notes?.custom ? [session.notes.custom] : [];
+
+  const text = (v: unknown) => (Array.isArray(v) ? v.join(', ') : v ? String(v) : '');
+
+  function startEdit() {
+    editData = {
+      title: session.title || '',
+      date: toDateInput(session.date),
+      summary: session.notes?.summary || '',
+      plotDevelopments: session.notes?.plotDevelopments || '',
+      xp: Number(session.notes?.xp) || 0,
+      nextPlans: session.notes?.nextPlans || ''
+    };
+    edit = true;
+  }
+
+  async function run(action: () => Promise<Response>, fallback: string) {
     loading = true;
     errorMsg = '';
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/sessions/${session._id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ isEnded: true })
-      });
-      if (!res.ok) throw new Error(await res.text());
-      session.isEnded = true;
+      const res = await action();
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.message || fallback);
+      }
+      return true;
     } catch (e) {
-      errorMsg = (e instanceof Error ? e.message : 'Failed to mark ended.');
+      errorMsg = e instanceof Error ? e.message : fallback;
+      return false;
+    } finally {
+      loading = false;
     }
-    loading = false;
+  }
+
+  async function saveEdit() {
+    const { title, date, ...notes } = editData;
+    const ok = await run(
+      () => api(`/api/sessions/${session._id}`, { method: 'PATCH', body: JSON.stringify({ title, date: date || null, notes }) }),
+      'Failed to save session.'
+    );
+    if (ok) {
+      edit = false;
+      onChanged();
+    }
+  }
+
+  async function setEnded(isEnded: boolean) {
+    const ok = await run(
+      () => api(`/api/sessions/${session._id}`, { method: 'PATCH', body: JSON.stringify({ isEnded }) }),
+      'Failed to update session.'
+    );
+    if (ok) onChanged();
   }
 
   async function addNote() {
     if (!noteInput.trim()) return;
-    loading = true;
-    errorMsg = '';
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/sessions/${session._id}/notes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ note: noteInput })
-      });
-      if (!res.ok) throw new Error(await res.text());
-      // Optionally reload session or append noteInput to session.notes.custom
+    const ok = await run(
+      () => api(`/api/sessions/${session._id}/notes`, { method: 'POST', body: JSON.stringify({ note: noteInput }) }),
+      'Failed to add note.'
+    );
+    if (ok) {
       noteInput = '';
-    } catch (e) {
-      errorMsg = (e instanceof Error ? e.message : 'Failed to add note.');
+      onChanged();
     }
-    loading = false;
   }
 
   async function deleteSession() {
-    if (!confirm('Are you sure you want to delete this session?')) return;
-    loading = true;
-    errorMsg = '';
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/sessions/${session._id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) throw new Error(await res.text());
-      goto(`/game/${session.gameId}`);
-    } catch (e) {
-      errorMsg = (e instanceof Error ? e.message : 'Failed to delete session.');
+    if (!confirm(`Delete "${session.title}"? This cannot be undone.`)) return;
+    const ok = await run(() => api(`/api/sessions/${session._id}`, { method: 'DELETE' }), 'Failed to delete session.');
+    if (ok) {
+      onClose();
+      onChanged();
     }
-    loading = false;
   }
 </script>
 
+<Modal title={edit ? 'Edit session' : session.title} {onClose} size="lg">
+  <span slot="eyebrow">
+    {#if session.isEnded}
+      <span class="badge">Ended</span>
+    {:else}
+      <span class="badge badge-primary">Upcoming</span>
+    {/if}
+  </span>
 
+  {#if errorMsg}<div class="alert alert-error" role="alert">{errorMsg}</div>{/if}
 
-{#if session}
-  <div class="session-details-box-large session-details-bottom">
-    <button class="close-btn" on:click={onClose} title="Close">×</button>
-    <div class="session-details-header">
-      <h3>{edit ? 'Edit Session' : `${session.title} ${session.isEnded ? '(Ended)' : ''}`}</h3>
-      <div class="session-details-actions">
-      
-        <button on:click={onEdit}>Edit</button>
-        <button on:click={markEnded} disabled={loading || session.isEnded}>Mark Ended</button>
-        <button on:click={() => showAddNote = !showAddNote}>Add Note</button>
-        <button on:click={deleteSession} disabled={loading}>Delete</button>
+  {#if edit}
+    <form class="stack-lg" on:submit|preventDefault={saveEdit}>
+      <label class="field">
+        <span class="field-label">Title</span>
+        <input class="input" type="text" bind:value={editData.title} required />
+      </label>
+      <label class="field">
+        <span class="field-label">Summary</span>
+        <textarea class="input" rows="4" bind:value={editData.summary}></textarea>
+      </label>
+      <label class="field">
+        <span class="field-label">Plot developments</span>
+        <textarea class="input" rows="3" bind:value={editData.plotDevelopments}></textarea>
+      </label>
+      <div class="form-grid">
+        <label class="field">
+          <span class="field-label">Date played</span>
+          <input class="input" type="date" bind:value={editData.date} />
+        </label>
+        <label class="field">
+          <span class="field-label">XP awarded</span>
+          <input class="input" type="number" min="0" step="10" bind:value={editData.xp} />
+        </label>
       </div>
-      {#if errorMsg}
-        <div class="error-msg">{errorMsg}</div>
+      <label class="field">
+        <span class="field-label">Next session plans</span>
+        <textarea class="input" rows="2" bind:value={editData.nextPlans}></textarea>
+      </label>
+      <div class="row-end">
+        <button type="button" class="btn btn-ghost" on:click={() => (edit = false)}>Cancel</button>
+        <button type="submit" class="btn btn-primary" disabled={loading || !editData.title.trim()}>Save changes</button>
+      </div>
+    </form>
+  {:else}
+    <div class="toolbar">
+      <button class="btn btn-outline btn-sm" on:click={startEdit} disabled={loading}>Edit</button>
+      {#if session.isEnded}
+        <button class="btn btn-outline btn-sm" on:click={() => setEnded(false)} disabled={loading}>Reopen</button>
+      {:else}
+        <button class="btn btn-outline btn-sm" on:click={() => setEnded(true)} disabled={loading}>Mark as ended</button>
       {/if}
-      {#if showAddNote}
-        <div class="add-note-box">
-          <input type="text" bind:value={noteInput} placeholder="Add a note..." />
-          <button on:click={addNote} disabled={loading || !noteInput.trim()}>Save Note</button>
-          <button on:click={() => showAddNote = false}>Cancel</button>
-        </div>
-      {/if}
+      <button class="btn btn-danger btn-sm push" on:click={deleteSession} disabled={loading}>Delete</button>
     </div>
-    <nav class="session-tabs">
-      <button class:active-tab={activeTab === 'overview'} on:click={() => activeTab = 'overview'}>Overview</button>
-      <button class:active-tab={activeTab === 'entities'} on:click={() => activeTab = 'entities'}>Entities</button>
-      <button class:active-tab={activeTab === 'notes'} on:click={() => activeTab = 'notes'}>Notes</button>
-      <button class:active-tab={activeTab === 'advanced'} on:click={() => activeTab = 'advanced'}>Advanced</button>
-    </nav>
 
+    <div class="tabs" role="tablist">
+      {#each TABS as [key, label]}
+        <button class="tab" role="tab" aria-selected={activeTab === key} on:click={() => (activeTab = key)}>
+          {label}
+          {#if key === 'notes' && customNotes.length}<span class="badge">{customNotes.length}</span>{/if}
+        </button>
+      {/each}
+    </div>
+
+    <div class="panel" role="tabpanel">
       {#if activeTab === 'overview'}
-        <div class="overview-grid">
-
-          <div class="summary-box">
-            <div class="summary-label">Summary</div>
-            <div class="summary-content">{session.notes?.summary || 'No summary.'}</div>
-            <div class="plotdev-box">
-              <div class="plotdev-label">Plot Developments: </div>
-              <div class="plotdev-content">{session.notes?.plotDevelopments || 'N/A'}</div>
-            </div>
+        <div class="overview">
+          <div class="stack">
+            <section>
+              <h3 class="eyebrow">Summary</h3>
+              <p class:faint={!session.notes?.summary}>{session.notes?.summary || 'No summary yet.'}</p>
+            </section>
+            <section>
+              <h3 class="eyebrow">Plot developments</h3>
+              <p class:faint={!session.notes?.plotDevelopments}>{session.notes?.plotDevelopments || 'Nothing recorded.'}</p>
+            </section>
           </div>
-
-        </div>
-        <div class="overview-row">
-          <div class="overview-item"><span class="item-label">XP:</span> {session.notes?.xp || 0}</div>
-          <div class="overview-item"><span class="item-label">Ended:</span> {session.isEnded ? 'Yes' : 'No'}</div>
-          <div class="overview-item"><span class="item-label">Date:</span> {session.date ? new Date(session.date).toLocaleDateString() : 'N/A'}</div>
+          <dl class="facts card">
+            <div><dt>XP</dt><dd>{session.notes?.xp || 0}</dd></div>
+            <div><dt>Status</dt><dd>{session.isEnded ? 'Ended' : 'Upcoming'}</dd></div>
+            <div><dt>{session.isEnded ? 'Played' : 'Planned for'}</dt><dd>{formatSessionDate(session) || '–'}</dd></div>
+          </dl>
         </div>
       {:else if activeTab === 'entities'}
-        <div class="entities-fields">
-          <div class="entity-group"><span class="entity-label">NPCs:</span>
-            <div class="entity-chips">
-              {#each session.npcs || session.connections?.npcs || [] as npc}
-                <span class="entity-chip npc">{npc.name || npc._id || npc}
-                  {#if npc.status} <span class="entity-status">({npc.status})</span>{/if}
-                </span>
-              {/each}
-            </div>
-          </div>
-          <div class="entity-group"><span class="entity-label">Scenes:</span>
-            <div class="entity-chips">
-              {#each session.scenes || session.connections?.scenes || [] as scene}
-                <span class="entity-chip scene">{scene.name || scene._id || scene}
-                  {#if scene.status} <span class="entity-status">({scene.status})</span>{/if}
-                </span>
-              {/each}
-            </div>
-          </div>
-          <div class="entity-group"><span class="entity-label">Players:</span>
-            <div class="entity-chips">
-              {#each session.players || session.connections?.players || [] as player}
-                <span class="entity-chip player">{player.name || player._id || player}
-                  {#if player.status} <span class="entity-status">({player.status})</span>{/if}
-                </span>
-              {/each}
-            </div>
-          </div>
-          <div class="entity-group"><span class="entity-label">Items:</span>
-            <div class="entity-chips">
-              {#each session.items || session.connections?.items || [] as item}
-                <span class="entity-chip item">{item.name || item._id || item}
-                  {#if item.status} <span class="entity-status">({item.status})</span>{/if}
-                </span>
-              {/each}
-            </div>
-          </div>
-
+        <div class="linked">
+          {#each LINKED as [key, label, type]}
+            <section data-type={type}>
+              <h3 class="eyebrow">{label}</h3>
+              <div class="chips">
+                {#each session[key] || [] as entity}
+                  <span class="chip"><span class="dot"></span>{entity.name || 'Deleted'}</span>
+                {:else}
+                  <span class="faint small">None</span>
+                {/each}
+              </div>
+            </section>
+          {/each}
         </div>
       {:else if activeTab === 'notes'}
-        <div class="notes-fields">
-          <div class="info-label">Session Notes</div>
-          <div class="info-value">
-            {#if Array.isArray(session.notes?.custom)}
-              {#each session.notes.custom as note, i}
-                <div class="note-item">{note}</div>
+        <div class="stack">
+          <form class="add-note" on:submit|preventDefault={addNote}>
+            <input class="input" type="text" placeholder="Write a note and press Enter…" bind:value={noteInput} />
+            <button type="submit" class="btn btn-primary" disabled={loading || !noteInput.trim()}>Add</button>
+          </form>
+          {#if customNotes.length}
+            <ol class="notes">
+              {#each customNotes as note}
+                <li>{note}</li>
               {/each}
-            {:else}
-              {session.notes?.custom || 'No extra notes.'}
-            {/if}
-          </div>
+            </ol>
+          {:else}
+            <p class="faint small">No notes yet.</p>
+          {/if}
         </div>
-      {:else if activeTab === 'advanced'}
-        <div class="advanced-fields">
-          <div class="info-label">Quests</div>
-          <div class="info-value">{session.notes?.quests || '-'}</div>
-          <div class="info-label">Loot</div>
-          <div class="info-value">{session.notes?.loot || '-'}</div>
-          <div class="info-label">Secrets</div>
-          <div class="info-value">{session.notes?.secrets || '-'}</div>
-          <div class="info-label">Factions</div>
-          <div class="info-value">{session.notes?.factions || '-'}</div>
-          <div class="info-label">Mysteries</div>
-          <div class="info-value">{session.notes?.mysteries || '-'}</div>
-          <div class="info-label">Goals</div>
-          <div class="info-value">{session.notes?.goals || '-'}</div>
-          <div class="info-label">Downtime</div>
-          <div class="info-value">{session.notes?.downtime || '-'}</div>
-          <div class="info-label">Next Session Plans</div>
-          <div class="info-value">{session.notes?.nextPlans || '-'}</div>
-        </div>
+      {:else}
+        <dl class="more">
+          {#each MORE_FIELDS as [key, label]}
+            <div>
+              <dt class="eyebrow">{label}</dt>
+              <dd class:faint={!text(session.notes?.[key])}>{text(session.notes?.[key]) || '–'}</dd>
+            </div>
+          {/each}
+        </dl>
       {/if}
-    {#if errorMsg}
-      <div class="error-message">{errorMsg}</div>
-    {/if}
-  </div>
-{/if}
+    </div>
+  {/if}
+</Modal>
+
 <style>
-/* Only one <style> block allowed in Svelte. Add all styles here. */
-.session-details-box-large.session-details-bottom {
-  position: fixed;
-  left: 0;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  z-index: 2000;
-  background: var(--color-bg-secondary);
-  color: var(--color-text-main);
-  border-radius: 0;
-  margin: 0;
-  padding: 2.2em 2.5em 2em 2.5em;
-  box-shadow: 0 0 32px 8px rgba(0,0,0,0.18);
-  font-size: 1.18em;
-  min-width: 0;
-  max-width: 100vw;
-  min-height: 100vh;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  transition: box-shadow 0.2s;
-}
-.close-btn {
-  position: absolute;
-  top: 0.2em;
-  right: 0.2em;
-  background: none;
-  border: none;
-  font-size: 2em;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  z-index: 10;
-}
-.session-details-header {
-  display: absolute;
-  right: 0;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1.2em;
-}
-.session-details-actions button {
-  background: var(--color-bg-button);
-  color: var(--color-text-main);
-  border: none;
-  border-radius: 6px;
-  padding: 0.5em 1.2em;
-  font-size: 1em;
-  margin-left: 0.7em;
-  cursor: pointer;
-  font-weight: 500;
-  transition: background 0.15s;
-}
-.session-details-actions button:hover {
-  background: var(--color-bg-button-hover);
-}
-.session-tabs {
-  display: flex;
-  gap: 1.2em;
-  margin-bottom: 1.2em;
-}
-.session-tabs button {
-  background: none;
-  color: var(--color-text-main);
-  border: none;
-  font-size: 1.08em;
-  padding: 0.3em 1.2em;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.session-tabs button.active-tab,
-.session-tabs button:hover {
-  background: var(--color-bg-button);
-  color: var(--color-text-main);
-}
-.entity-group {
-  margin-bottom: 1em;
-}
-.entity-label {
-  font-weight: 600;
-  color: var(--color-text-accent);
-  margin-bottom: 0.2em;
-  display: block;
-}
-.entity-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5em;
-}
-.entity-chip {
-  display: inline-block;
-  padding: 0.3em 0.9em;
-  border-radius: 1em;
-  background: var(--color-bg-button-hover);
-  color: var(--color-text-main);
-  font-size: 0.98em;
-  font-weight: 500;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.07);
-}
-.entity-chip.npc { background: #e3f2fd; color: #1976d2; }
-.entity-chip.scene { background: #f3e5f5; color: #7b1fa2; }
-.entity-chip.player { background: #e8f5e9; color: #388e3c; }
-.entity-chip.item { background: #fffde7; color: #fbc02d; }
-.error-message {
-  color: red;
-  font-weight: bold;
-  margin-top: 1em;
-}
-.add-note-box {
-  display: flex;
-  gap: 0.5em;
-  margin-top: 0.5em;
-}
-.add-note-box input {
-  flex: 1;
-  padding: 0.5em;
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  font-size: 1em;
-}
-.add-note-box button {
-  background: var(--color-bg-button);
-  color: var(--color-text-main);
-  border: none;
-  border-radius: 4px;
-  padding: 0.5em 1em;
-  font-size: 1em;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.add-note-box button:hover {
-  background: var(--color-bg-button-hover);
-}
-.error-msg {
-  color: red;
-  font-size: 0.9em;
-  margin-top: 0.5em;
-}
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-3);
+    margin-bottom: var(--sp-4);
+  }
+  .push { margin-left: auto; }
+  .panel { padding-top: var(--sp-5); }
+  section { display: flex; flex-direction: column; gap: var(--sp-2); }
+  p { white-space: pre-wrap; }
 
-.summary-box {
-  background: var(--color-bg-main);
-  border-radius: 8px;
-  padding: 1em;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.10);
-}
+  /* Main text : facts = φ : 1 */
+  .overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1.618fr) minmax(0, 1fr);
+    gap: var(--sp-5);
+    align-items: start;
+  }
+  .facts {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    margin: 0;
+    padding: var(--sp-4);
+    background: var(--surface-2);
+  }
+  .facts div { display: flex; justify-content: space-between; gap: var(--sp-3); }
+  .facts dt { color: var(--text-muted); font-size: var(--fs-xs); }
+  .facts dd { margin: 0; font-weight: 600; }
 
-.summary-label{
-  font-size: 1.5rem;
-  font-weight: bold;
-  color: var(--color-text-secondary);
-  margin: 0.5rem 0;
-}
+  .linked {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 233px), 1fr));
+    gap: var(--sp-5);
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 
-.plotdev-box {
-  display: flex;
-  margin-top: 1em;
-  padding-top: 1em;
-  border-top: 1px solid var(--color-border);
-}
+  .add-note { display: flex; gap: var(--sp-3); }
+  .notes {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: note;
+  }
+  .notes li {
+    position: relative;
+    padding: var(--sp-3) var(--sp-4) var(--sp-3) var(--sp-6);
+    background: var(--surface-2);
+    border-radius: var(--r-md);
+    white-space: pre-wrap;
+    counter-increment: note;
+  }
+  .notes li::before {
+    content: counter(note);
+    position: absolute;
+    left: var(--sp-4);
+    color: var(--text-faint);
+    font-size: var(--fs-xs);
+    font-weight: 650;
+    line-height: 2.058;
+  }
 
-.plotdev-label {
-  font-weight: bold;
-  color: var(--color-text-secondary);
-  margin-right: 0.5em;
-}
+  .more {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 233px), 1fr));
+    gap: var(--sp-5);
+    margin: 0;
+  }
+  .more div { display: flex; flex-direction: column; gap: var(--sp-2); }
+  .more dd { margin: 0; white-space: pre-wrap; }
 
-
-.overview-row {
-  color: var(--color-text-secondary);
-  background-color: var(--color-bg-main);
-  display: flex;
-  gap: 2em;
-  margin-top: 1.5em;
-  padding: 1em;
-  border-radius: 8px;
-}
+  @media (max-width: 610px) {
+    .overview { grid-template-columns: 1fr; }
+  }
 </style>

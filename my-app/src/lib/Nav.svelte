@@ -1,142 +1,143 @@
-<script>
-  export let user = null;
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { afterNavigate } from '$app/navigation';
+  import { page } from '$app/stores';
+  import { getToken, clearToken } from '$lib/api';
+  import favicon from '$lib/assets/favicon.svg';
+
+  let signedIn = false;
   let menuOpen = false;
-  function toggleMenu() {
-    menuOpen = !menuOpen;
-  }
-  function closeMenu() {
+
+  onMount(() => { signedIn = !!getToken(); });
+  afterNavigate(() => {
+    signedIn = !!getToken();
     menuOpen = false;
+  });
+
+  function signOut() {
+    clearToken();
+    window.location.href = '/';
   }
+
+  $: path = $page.url.pathname;
+  $: inGames = path.startsWith('/my-games') || path.startsWith('/game/') || path.startsWith('/session/');
 </script>
 
-<nav class="navbar">
-  <a href="/" class="logo">DnD Session Manager</a>
-  <button class="hamburger" aria-label="Toggle menu" on:click={toggleMenu} aria-expanded={menuOpen}>
-    <span class="bar"></span>
-    <span class="bar"></span>
-    <span class="bar"></span>
-  </button>
-  <div class="nav-links {menuOpen ? 'open' : ''}">
-    <a href="/" class="nav-link" on:click={closeMenu}>Home</a>
-    <a href="/login" class="nav-link" on:click={closeMenu}>Sign In</a>
-  <a href="/games" class="nav-link" on:click={closeMenu}>Create Game</a>
-  <a href="/my-games" class="nav-link" on:click={closeMenu}>My Games</a>
-  
-      <button class="nav-link signout-btn" on:click={() => {
-        console.log('Token before sign out:', localStorage.getItem('token'));
-        localStorage.removeItem('token');
-        console.log('Token after sign out:', localStorage.getItem('token'));
-        closeMenu();
-        window.location.href = '/';
-      }}>Sign Out</button>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a href={signedIn ? '/my-games' : '/'} class="brand">
+      <img src={favicon} alt="" width="26" height="26" />
+      <span>DnD Session Manager</span>
+    </a>
 
+    <button
+      class="btn btn-ghost btn-icon menu-toggle"
+      aria-label="Menu"
+      aria-expanded={menuOpen}
+      aria-controls="main-nav"
+      on:click={() => (menuOpen = !menuOpen)}
+    >
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+        {#if menuOpen}
+          <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        {:else}
+          <path d="M3 6h14M3 10h14M3 14h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        {/if}
+      </svg>
+    </button>
+
+    <nav id="main-nav" class="nav" class:open={menuOpen} aria-label="Main">
+      {#if signedIn}
+        <a href="/my-games" class="nav-link" aria-current={inGames ? 'page' : undefined}>My games</a>
+        <a href="/games" class="btn btn-primary btn-sm" aria-current={path === '/games' ? 'page' : undefined}>+ New game</a>
+        <button class="btn btn-ghost btn-sm" on:click={signOut}>Sign out</button>
+      {:else}
+        <a href="/login" class="nav-link" aria-current={path === '/login' ? 'page' : undefined}>Sign in</a>
+        <a href="/signup" class="btn btn-primary btn-sm">Get started</a>
+      {/if}
+    </nav>
   </div>
-</nav>
+</header>
 
 <style>
-*{
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-.navbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: #181c22;
-  padding: 1rem 1.2rem;
-  border-radius: 0 0 12px 12px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-  position: relative;
-}
-.logo {
-  font-size: 1.3rem;
-  font-weight: bold;
-  color: #6c47ff;
-  text-decoration: none;
-  letter-spacing: 1px;
-}
-.hamburger {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  width: 2.2rem;
-  height: 2.2rem;
-  background: none;
-  border: none;
-  cursor: pointer;
-  z-index: 20;
-}
-.bar {
-  width: 1.7rem;
-  height: 3px;
-  background: #fff;
-  margin: 2.5px 0;
-  border-radius: 2px;
-  transition: all 0.3s;
-}
-.nav-links {
-  display: flex;
-  gap: 1.5rem;
-}
-.nav-link {
-  color: #fff;
-  text-decoration: none;
-  font-size: 1.05rem;
-  font-weight: 500;
-  transition: color 0.2s;
-}
-.nav-link:hover {
-  color: #b3a1ff;
-}
-@media (max-width: 700px) {
-  .nav-links {
-    position: absolute;
-    top: 100%;
-    right: 0;
-    left: 0;
-    background: #181c22;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0;
-    padding: 1rem 0.5rem;
-    border-radius: 0 0 12px 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    z-index: 10;
-    display: none;
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(18, 20, 25, 0.86);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
   }
-  .nav-links.open {
+  .topbar-inner {
     display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-4);
+    max-width: var(--w-page);
+    height: var(--sp-7);
+    margin: 0 auto;
+    padding: 0 var(--sp-5);
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-3);
+    color: var(--text);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    text-decoration: none;
+  }
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-4);
   }
   .nav-link {
-    width: 100%;
-    padding: 0.8rem 1.2rem;
-    font-size: 1.1rem;
-    border-radius: 6px;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    height: var(--sp-7);
+    color: var(--text-muted);
+    font-weight: 600;
+    text-decoration: none;
   }
-  .hamburger {
-    display: flex;
+  .nav-link:hover,
+  .nav-link[aria-current='page'] {
+    color: var(--text);
   }
-}
-@media (min-width: 701px) {
-  .hamburger {
+  .nav-link[aria-current='page']::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    background: var(--primary-text);
+  }
+  .menu-toggle {
     display: none;
   }
-}
-.signout-btn {
-  background: none;
-  border: none;
-  color: #fff;
-  font-size: 1.05rem;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 0;
-  margin: 0;
-  transition: color 0.2s;
-}
-.signout-btn:hover {
-  color: #b3a1ff;
-}
+
+  @media (max-width: 610px) {
+    .topbar-inner { padding: 0 var(--sp-4); }
+    .menu-toggle { display: inline-flex; }
+    .nav {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      display: none;
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--sp-3);
+      padding: var(--sp-4);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      box-shadow: var(--shadow-lg);
+    }
+    .nav.open { display: flex; }
+    .nav .btn { min-height: var(--control-h); font-size: var(--fs-base); }
+    .nav-link { height: auto; padding: var(--sp-2) 0; }
+    .nav-link[aria-current='page']::after { display: none; }
+  }
 </style>

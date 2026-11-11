@@ -1,103 +1,92 @@
-<script>
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
+
   let email = '';
   let password = '';
-  let message = '';
+  let error = '';
+  let info = '';
+  let loading = false;
+
+  onMount(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('expired')) info = 'Your session has expired. Please sign in again.';
+    if (params.has('registered')) info = 'Account created. Sign in to continue.';
+    if (params.get('email')) email = params.get('email') ?? '';
+  });
 
   async function login() {
-    const res = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.token) {
-        localStorage.setItem('token', data.token);
-      }
-      message = 'Login successful! Redirecting...';
-      setTimeout(() => window.location.href = '/my-games', 1000);
-    } else {
+    loading = true;
+    error = '';
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
       const data = await res.json().catch(() => ({}));
-      message = data.error || 'Login failed.';
+      if (res.ok && data.token) {
+        localStorage.setItem('token', data.token);
+        await goto('/my-games');
+        return;
+      }
+      error = data.error || 'Sign in failed.';
+    } catch {
+      error = 'Could not reach the server. Try again.';
     }
+    loading = false;
   }
 </script>
 
-<main class="login-container">
-  <h2 class="login-title">Sign In</h2>
-  <form on:submit|preventDefault={login}>
-    <label for="email">Email</label>
-    <input id="email" type="email" bind:value={email} required class="login-input" />
+<svelte:head>
+  <title>Sign in · DnD Session Manager</title>
+</svelte:head>
 
-    <label for="password">Password</label>
-    <input id="password" type="password" bind:value={password} required class="login-input" />
+<main class="auth">
+  <div class="auth-card card">
+    <div class="auth-head">
+      <h1>Welcome back</h1>
+      <p class="muted">Sign in to your campaigns.</p>
+    </div>
 
-    <button type="submit" class="login-btn">Sign In</button>
-  </form>
-  {#if message}
-    <div class="login-message">{message}</div>
-  {/if}
-  <div class="signup-link">
-    <span>Don't have an account?</span>
-    <a href="/signup">Sign up here</a>
+    {#if info}<div class="alert alert-info" role="status">{info}</div>{/if}
+    {#if error}<div class="alert alert-error" role="alert">{error}</div>{/if}
+
+    <form class="stack" on:submit|preventDefault={login}>
+      <label class="field">
+        <span class="field-label">Email</span>
+        <input class="input" type="email" autocomplete="email" bind:value={email} required />
+      </label>
+      <label class="field">
+        <span class="field-label">Password</span>
+        <input class="input" type="password" autocomplete="current-password" bind:value={password} required />
+      </label>
+      <button type="submit" class="btn btn-primary btn-lg btn-block" disabled={loading}>
+        {loading ? 'Signing in…' : 'Sign in'}
+      </button>
+    </form>
+
+    <p class="auth-switch muted">No account yet? <a href="/signup">Create one</a></p>
   </div>
 </main>
 
 <style>
-.login-container {
-  max-width: 400px;
-  margin: 2rem auto;
-  padding: 2rem;
-  background: #23272f;
-  border-radius: 12px;
-  box-shadow: 0 2px 16px rgba(0,0,0,0.15);
-  color: #fff;
-}
-.login-title {
-  text-align: center;
-}
-.login-input {
-  width: 100%;
-  margin-bottom: 1rem;
-  padding: 0.5rem;
-  border-radius: 6px;
-  border: 1px solid #444;
-  background: #181c22;
-  color: #fff;
-}
-.login-btn {
-  width: 100%;
-  padding: 0.75rem;
-  border: none;
-  border-radius: 6px;
-  background: #6c47ff;
-  color: #fff;
-  font-size: 1rem;
-  font-weight: bold;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-.login-btn:hover {
-  background: #4b2fd6;
-}
-.login-message {
-  margin-top: 1rem;
-  text-align: center;
-  color: #ffb347;
-}
-  .signup-link {
-    margin-top: 1.5rem;
-    text-align: center;
-    font-size: 1rem;
+  .auth {
+    display: grid;
+    place-items: start center;
+    padding: var(--sp-8) var(--sp-4);
   }
-  .signup-link a {
-    color: #6c47ff;
-    text-decoration: underline;
-    margin-left: 0.5rem;
-    font-weight: bold;
-    transition: color 0.2s;
+  .auth-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-5);
+    width: min(var(--w-auth), 100%);
+    padding: var(--sp-6) var(--sp-5);
   }
-  .signup-link a:hover {
-    color: #4b2fd6;
+  .auth-head { display: flex; flex-direction: column; gap: var(--sp-2); }
+  .auth-head h1 { font-size: var(--fs-lg); }
+  .auth-switch { text-align: center; font-size: var(--fs-xs); }
+  @media (max-width: 610px) {
+    .auth { padding: var(--sp-6) var(--sp-4); }
   }
 </style>

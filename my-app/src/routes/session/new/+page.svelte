@@ -1,14 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
-  import { get } from 'svelte/store';
+  import { api, getToken } from '$lib/api';
+  import { sortByDate, todayInput } from '$lib/sessions';
 
+  type Key = 'scenes' | 'npcs' | 'players' | 'items';
+
+  let gameId = '';
   let title = '';
-  let npcs: any = [];
-  let items: any = [];
-  let scenes: any = [];
-  let players: any = [];
+  let date = todayInput();
+  let pickQuery = '';
+  let isEnded = false;
+  let error = '';
+  let saving = false;
+  let showMore = false;
+
   let notes = {
     summary: '',
     plotDevelopments: '',
@@ -23,330 +29,283 @@
     nextPlans: '',
     custom: ''
   };
-  let connections: {
-      npcs: string[],
-      items: string[],
-      scenes: string[],
-      players: string[],
-      quests: string[]
-    } = {
-      npcs: [],
-      items: [],
-      scenes: [],
-      players: [],
-      quests: []
-    };
-  let isEnded = false;
-  let error = '';
-  let success = false;
-  let showAdvanced = false;
+  type NoteKey = keyof typeof notes;
 
-  // Optionally: fetch game content for selection
-  let gameId = '';
+  let content: Record<Key, any[]> = { scenes: [], npcs: [], players: [], items: [] };
+  let selected: Record<Key, string[]> = { scenes: [], npcs: [], players: [], items: [] };
+
+  const GROUPS: { key: Key; label: string; type: string }[] = [
+    { key: 'scenes', label: 'Scenes', type: 'scene' },
+    { key: 'npcs', label: 'NPCs', type: 'npc' },
+    { key: 'players', label: 'Players', type: 'player' },
+    { key: 'items', label: 'Items', type: 'item' }
+  ];
+  const MORE_FIELDS: [NoteKey, string, boolean][] = [
+    ['quests', 'Quests', false], ['loot', 'Loot', false], ['factions', 'Factions', false], ['goals', 'Goals', false],
+    ['secrets', 'Secrets', true], ['mysteries', 'Mysteries', true], ['downtime', 'Downtime', true],
+    ['nextPlans', 'Next session plans', true], ['custom', 'Other notes', true]
+  ];
+
   onMount(async () => {
-    const urlParams = new URLSearchParams(window.location.search);
-    gameId = urlParams.get('gameId') || '';
-    if (gameId) {
-      const token = localStorage.getItem('token');
-      const [npcRes, playerRes, itemRes, sceneRes] = await Promise.all([
-        fetch(`/api/game-content?npc=1&gameId=${gameId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch(`/api/game-content?player=1&gameId=${gameId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch(`/api/game-content?item=1&gameId=${gameId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch(`/api/game-content?scene=1&gameId=${gameId}`, { headers: { 'Authorization': `Bearer ${token}` } })
-      ]);
-      npcs = npcRes.ok ? await npcRes.json() : [];
-      players = playerRes.ok ? await playerRes.json() : [];
-      items = itemRes.ok ? await itemRes.json() : [];
-      scenes = sceneRes.ok ? await sceneRes.json() : [];
-    }
-  });
-
-  async function createSession() {
-    error = '';
-    success = false;
-    if (!title || !gameId) {
-      error = 'Title and gameId are required.';
+    if (!getToken()) {
+      window.location.href = '/login';
       return;
     }
-    const token = localStorage.getItem('token');
-    const res = await fetch('/api/sessions', {
+    gameId = new URLSearchParams(window.location.search).get('gameId') || '';
+    if (!gameId) return;
+    const load = async (type: string) => {
+      const res = await api(`/api/game-content?${type}=1&gameId=${gameId}`);
+      return res.ok ? await res.json() : [];
+    };
+    const [npcs, players, items, scenes, sessionsRes] = await Promise.all([
+      load('npc'), load('player'), load('item'), load('scene'), api(`/api/sessions?gameId=${gameId}`)
+    ]);
+    content = { scenes, npcs, players, items };
+    const sessions: any[] = sessionsRes.ok ? await sessionsRes.json() : [];
+
+    // Pre-select the players who were at the most recent session (retired characters drop out),
+    // or everyone if this is the first session
+    const latest = sortByDate(sessions, 'desc')[0];
+    const ids = new Set(players.map((p: any) => p._id));
+    const lastPlayers = (latest?.connections?.players ?? []).filter((id: string) => ids.has(id));
+    selected.players = lastPlayers.length ? lastPlayers : players.map((p: any) => p._id);
+
+    // Continue the numbering: "Session 134: …" → "Session 135: "
+    const numbers = sessions.map((s) => Number(/^session\s+(\d+)/i.exec(s.title)?.[1])).filter((n) => n > 0);
+    title = `Session ${(numbers.length ? Math.max(...numbers) : sessions.length) + 1}: `;
+  });
+
+  /** Selected entries first, then the rest filtered by the search */
+  function pickList(list: any[], chosen: string[], q: string) {
+    const term = q.trim().toLowerCase();
+    const on = list.filter((e) => chosen.includes(e._id));
+    const off = list.filter((e) => !chosen.includes(e._id) && (!term || e.name.toLowerCase().includes(term)));
+    return [...on, ...off];
+  }
+  $: totalContent = content.scenes.length + content.npcs.length + content.players.length + content.items.length;
+
+  function toggle(key: Key, id: string) {
+    selected[key] = selected[key].includes(id) ? selected[key].filter((x) => x !== id) : [...selected[key], id];
+  }
+
+  async function createSession() {
+    if (!title.trim() || !gameId) return;
+    saving = true;
+    error = '';
+    const res = await api('/api/sessions', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-      },
-      body: JSON.stringify({
-        gameId,
-        title,
-        notes,
-        connections,
-        isEnded
-      })
+      body: JSON.stringify({ gameId, title, date, notes, connections: { ...selected, quests: [] }, isEnded })
     });
     if (res.ok) {
-      success = true;
-      setTimeout(() => goto(`/game/${gameId}`), 1000);
-    } else {
-      error = (await res.text()) || 'Failed to create session.';
+      await goto(`/game/${gameId}`);
+      return;
     }
+    const data = await res.json().catch(() => ({}));
+    error = data.message || 'Failed to create session.';
+    saving = false;
   }
 </script>
 
 <svelte:head>
-  <title>Create Session</title>
+  <title>New session · DnD Session Manager</title>
 </svelte:head>
 
-<main>
-  <button class="back-btn" type="button" on:click={() => goto(`/game/${gameId}`)}>← Back to Game</button>
-  <h1>Create New Session</h1>
-
-  {#if error}
-    <div class="error">{error}</div>
-  {/if}
-  {#if success}
-    <div class="success">Session created!</div>
-  {/if}
-  <form on:submit|preventDefault={createSession} class="session-grid">
-    <div class="main-fields">
-      <label>
-        Title
-        <input bind:value={title} required />
-      </label>
-      <label>
-        Summary
-        <textarea bind:value={notes.summary}></textarea>
-      </label>
-      <label>
-        Plot Developments
-        <textarea bind:value={notes.plotDevelopments}></textarea>
-      </label>
-      <fieldset class="entity-list">
-        <legend>NPCs</legend>
-        {#each npcs as npc}
-          <label class="entity-checkbox {connections.npcs.includes(npc._id) ? 'selected' : ''}"><input type="checkbox" value={npc._id} on:change={e => {
-            if ((e.target as HTMLInputElement).checked) connections.npcs = [...connections.npcs, npc._id];
-            else connections.npcs = connections.npcs.filter((id: string) => id !== npc._id);
-          }} checked={connections.npcs.includes(npc._id)} /> {npc.name}</label>
-        {/each}
-      </fieldset>
-      <fieldset class="entity-list">
-        <legend>Scenes</legend>
-        {#each scenes as scene}
-          <label class="entity-checkbox {connections.scenes.includes(scene._id) ? 'selected' : ''}"><input type="checkbox" value={scene._id} on:change={e => {
-            if ((e.target as HTMLInputElement).checked) connections.scenes = [...connections.scenes, scene._id];
-            else connections.scenes = connections.scenes.filter((id: string) => id !== scene._id);
-          }} checked={connections.scenes.includes(scene._id)} /> {scene.name}</label>
-        {/each}
-      </fieldset>
-      <fieldset class="entity-list">
-        <legend>Players</legend>
-        {#each players as player}
-          <label class="entity-checkbox {connections.players.includes(player._id) ? 'selected' : ''}"><input type="checkbox" value={player._id} on:change={e => {
-            if ((e.target as HTMLInputElement).checked) connections.players = [...connections.players, player._id];
-            else connections.players = connections.players.filter((id: string) => id !== player._id);
-          }} checked={connections.players.includes(player._id)} /> {player.name}</label>
-        {/each}
-      </fieldset>
-      <fieldset class="entity-list">
-        <legend>Items</legend>
-        {#each items as item}
-          <label class="entity-checkbox {connections.items.includes(item._id) ? 'selected' : ''}"><input type="checkbox" value={item._id} on:change={e => {
-            if ((e.target as HTMLInputElement).checked) connections.items = [...connections.items, item._id];
-            else connections.items = connections.items.filter((id: string) => id !== item._id);
-          }} checked={connections.items.includes(item._id)} /> {item.name}</label>
-        {/each}
-
-      </fieldset>
+<main class="page">
+  <a href={`/game/${gameId}`} class="back-link">← Back to game</a>
+  <header class="page-header">
+    <div>
+      <h1>New session</h1>
+      <p class="muted lead">Plan what's coming up, or log a session you've just played.</p>
     </div>
-    <div class="side-fields">
-      <label>
-        XP
-        <input type="range" min="0" max="10000" step="10" bind:value={notes.xp} />
-        <span>{notes.xp}</span>
-      </label>
-      <label>
-        Mark session as ended
-        <input type="checkbox" bind:checked={isEnded} />
-      </label>
-      <button type="button" class="toggle-advanced" on:click={() => showAdvanced = !showAdvanced}>
-        {showAdvanced ? 'Hide' : 'Show'} More Options
-      </button>
-      {#if showAdvanced}
-        <div class="advanced-fields">
-          <label>
-            Quests
-            <input bind:value={notes.quests} />
+  </header>
+
+  {#if !gameId}
+    <div class="alert alert-error" role="alert">No game selected. Open a game and click "New session".</div>
+  {:else}
+    <form class="layout" on:submit|preventDefault={createSession}>
+      <div class="main stack-lg">
+        {#if error}<div class="alert alert-error" role="alert">{error}</div>{/if}
+
+        <section class="card stack-lg">
+          <label class="field">
+            <span class="field-label">Title</span>
+            <input class="input title-input" type="text" maxlength="200" placeholder="e.g. Session 4: Into the Mines" bind:value={title} required />
           </label>
-          <label>
-            Loot
-            <input bind:value={notes.loot} />
+          <label class="field">
+            <span class="field-label">Summary</span>
+            <textarea class="input" rows="5" placeholder="What is this session about, or what happened?" bind:value={notes.summary}></textarea>
           </label>
-          <label>
-            Secrets
-            <textarea bind:value={notes.secrets}></textarea>
+          <label class="field">
+            <span class="field-label">Plot developments</span>
+            <textarea class="input" rows="3" placeholder="Twists, reveals, decisions the party made…" bind:value={notes.plotDevelopments}></textarea>
           </label>
-          <label>
-            Factions
-            <input bind:value={notes.factions} />
+        </section>
+
+        <section class="card stack-lg">
+          <div>
+            <h2 class="card-title">What's involved?</h2>
+            <p class="hint">Tap to link scenes, NPCs, players and items to this session.</p>
+          </div>
+          {#if totalContent > 30}
+            <input class="input" type="search" placeholder="Search by name…" bind:value={pickQuery} aria-label="Search scenes, NPCs, players and items" />
+          {/if}
+          {#each GROUPS as group}
+            <fieldset class="pick" data-type={group.type}>
+              <legend class="field-label"><span class="dot"></span>{group.label}<span class="faint">{selected[group.key].length ? `${selected[group.key].length} selected` : ''}</span></legend>
+              <div class="pick-list">
+                {#each pickList(content[group.key], selected[group.key], pickQuery) as entity (entity._id)}
+                  <label class="pick-chip" class:on={selected[group.key].includes(entity._id)}>
+                    <input type="checkbox" class="sr-only" checked={selected[group.key].includes(entity._id)} on:change={() => toggle(group.key, entity._id)} />
+                    {entity.name}
+                  </label>
+                {:else}
+                  <span class="faint small">{content[group.key].length ? 'No match' : 'None in this game yet.'}</span>
+                {/each}
+              </div>
+            </fieldset>
+          {/each}
+        </section>
+
+        <section class="card">
+          <button type="button" class="more-toggle" aria-expanded={showMore} on:click={() => (showMore = !showMore)}>
+            <span><strong>More notes</strong> <span class="faint small">Quests, loot, secrets, next session plans…</span></span>
+            <svg class:flipped={showMore} width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          </button>
+          {#if showMore}
+            <div class="form-grid more-fields">
+              {#each MORE_FIELDS as [key, label, long]}
+                <label class="field" class:wide={long}>
+                  <span class="field-label">{label}</span>
+                  {#if long}
+                    <textarea class="input" rows="2" bind:value={notes[key]}></textarea>
+                  {:else}
+                    <input class="input" type="text" bind:value={notes[key]} />
+                  {/if}
+                </label>
+              {/each}
+            </div>
+          {/if}
+        </section>
+      </div>
+
+      <aside class="side">
+        <div class="card stack-lg">
+          <fieldset class="status">
+            <legend class="field-label">Status</legend>
+            <label class="status-opt" class:on={!isEnded}>
+              <input type="radio" name="status" class="sr-only" value={false} bind:group={isEnded} />
+              <span class="status-dot upcoming"></span>
+              <span><strong>Upcoming</strong><span class="hint">Planning ahead</span></span>
+            </label>
+            <label class="status-opt" class:on={isEnded}>
+              <input type="radio" name="status" class="sr-only" value={true} bind:group={isEnded} />
+              <span class="status-dot"></span>
+              <span><strong>Played</strong><span class="hint">Logging a finished session</span></span>
+            </label>
+          </fieldset>
+
+          <label class="field">
+            <span class="field-label">Date</span>
+            <input class="input" type="date" bind:value={date} />
           </label>
-          <label>
-            Mysteries
-            <textarea bind:value={notes.mysteries}></textarea>
+
+          <label class="field">
+            <span class="field-label">XP awarded</span>
+            <input class="input" type="number" min="0" step="10" bind:value={notes.xp} />
+            <input class="range" type="range" min="0" max="10000" step="50" bind:value={notes.xp} aria-label="XP slider" />
           </label>
-          <label>
-            Goals
-            <input bind:value={notes.goals} />
-          </label>
-          <label>
-            Downtime
-            <textarea bind:value={notes.downtime}></textarea>
-          </label>
-          <label>
-            Next Session Plans
-            <textarea bind:value={notes.nextPlans}></textarea>
-          </label>
-          <label>
-            Custom Notes
-            <textarea bind:value={notes.custom}></textarea>
-          </label>
+
+          <div class="summary small muted">
+            {selected.scenes.length + selected.npcs.length + selected.players.length + selected.items.length} linked
+          </div>
+
+          <div class="stack">
+            <button type="submit" class="btn btn-primary btn-lg btn-block" disabled={saving || !title.trim()}>
+              {saving ? 'Saving…' : 'Create session'}
+            </button>
+            <a href={`/game/${gameId}`} class="btn btn-ghost btn-block">Cancel</a>
+          </div>
         </div>
-      {/if}
-    </div>
-    <div class="form-actions">
-      <button type="submit">Create Session</button>
-    </div>
-  </form>
+      </aside>
+    </form>
+  {/if}
 </main>
 
 <style>
-main {
-  max-width: 900px;
-  margin: 2rem auto;
-  background: var(--color-bg-secondary);
-  color: var(--color-text-main);
-  padding: 2rem;
-  border-radius: 1rem;
-  box-shadow: 0 2px 8px var(--color-shadow);
-}
-.session-grid {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 2rem;
-}
-.main-fields label,
-.main-fields fieldset {
-  margin-bottom: 1.2em;
-}
-.side-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 1.2em;
-}
-.advanced-fields label {
-  margin-bottom: 1em;
-}
-.form-actions {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 2em;
-}
-input, textarea {
-  width: 100%;
-  margin-top: 0.25rem;
-  background: var(--color-bg-input);
-  color: var(--color-text-main);
-  border: 1px solid var(--color-border);
-  border-radius: 0.3rem;
-  padding: 0.5rem;
-}
-button, .toggle-advanced {
-  margin-top: 1.5rem;
-  background: var(--color-bg-button);
-  color: var(--color-text-main);
-  border: none;
-  border-radius: 0.3rem;
-  padding: 0.7rem 1.5rem;
-  font-size: 1rem;
-  cursor: pointer;
-}
-.toggle-advanced {
-  margin-top: 0.5rem;
-  margin-bottom: 0.5rem;
-  background: var(--color-bg-secondary);
-  color: var(--color-text-accent);
-  border: 1px solid var(--color-border);
-  font-size: 0.98em;
-  padding: 0.4em 1em;
-}
-.error {
-  color: var(--color-text-warning);
-  margin-bottom: 1rem;
-}
-.success {
-  color: var(--color-text-success);
-  margin-bottom: 1rem;
-}
-fieldset.entity-list {
-/* Hide checkboxes in entity lists */
-.entity-checkbox input[type="checkbox"] {
-  display: none;
-}
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    padding: 1em 1em 0.5em 1em;
-    margin-bottom: 1.2em;
-    background: var(--color-bg-main);
+  /* Content : side panel = φ : 1 */
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.618fr) minmax(260px, 1fr);
+    gap: var(--sp-6);
+    align-items: start;
+    max-width: 1220px;
   }
-  fieldset.entity-list legend {
-    color: var(--color-text-accent);
-    font-size: 1.05em;
-    margin-bottom: 0.5em;
-    font-weight: bold;
+  .side {
+    position: sticky;
+    top: calc(var(--sp-7) + var(--sp-5));
   }
-  .entity-checkbox {
+  .title-input { font-size: var(--fs-md); font-weight: 600; min-height: var(--control-h-lg); }
+
+  fieldset { margin: 0; padding: 0; border: none; min-width: 0; }
+  legend { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); padding: 0; }
+  /* Scroll inside each group so a long campaign doesn't produce a page of chips (233px = Fibonacci) */
+  .pick-list { position: relative; display: flex; flex-wrap: wrap; align-content: flex-start; gap: var(--sp-2); max-height: 233px; overflow-y: auto; padding: 2px; scrollbar-width: thin; }
+  legend .faint { margin-left: var(--sp-2); font-weight: 500; }
+  .pick-chip {
+    padding: var(--sp-1) var(--sp-4);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-pill);
+    font-size: var(--fs-xs);
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+  }
+  .pick-chip:hover { border-color: var(--type-color); color: var(--text); }
+  .pick-chip.on {
+    background: color-mix(in srgb, var(--type-color) 18%, transparent);
+    border-color: var(--type-color);
+    color: var(--text);
+  }
+  .pick-chip:has(input:focus-visible) { outline: 2px solid var(--primary-text); outline-offset: 2px; }
+
+  .more-toggle {
     display: flex;
     align-items: center;
-    gap: 0.7em;
-    margin-bottom: 0.4em;
-    font-size: 1em;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    width: 100%;
+    padding: 0;
+    border: none;
+    background: none;
+    text-align: left;
     cursor: pointer;
-    padding: 0.2em 0.1em;
-    border-radius: 4px;
-    transition: background 0.15s;
   }
-  .entity-checkbox:hover {
-    background: var(--color-bg-button-hover);
-  }
-  .entity-checkbox input[type="checkbox"] {
-    accent-color: var(--color-accent, #4e8cff);
-    width: 1.1em;
-    height: 1.1em;
-    margin-right: 0.3em;
-  }
+  .more-toggle svg { color: var(--text-muted); transition: transform 0.15s; flex: none; }
+  .more-toggle svg.flipped { transform: rotate(180deg); }
+  .more-fields { margin-top: var(--sp-5); }
+  .field.wide { grid-column: 1 / -1; }
 
-  /* Highlight selected entity names */
-.entity-checkbox.selected {
-  color: var(--color-text-accent, #2a9d8f);
-  font-weight: bold;
-  background: var(--color-bg-accent, #e0f7fa);
-  border-radius: 0.3em;
-  padding: 0.1em 0.4em;
-}
+  .status { display: flex; flex-direction: column; gap: var(--sp-2); }
+  .status-opt {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    cursor: pointer;
+  }
+  .status-opt > span:last-child { display: flex; flex-direction: column; }
+  .status-opt.on { border-color: var(--primary-text); background: var(--primary-soft); }
+  .status-opt:has(input:focus-visible) { outline: 2px solid var(--primary-text); outline-offset: 2px; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-faint); flex: none; }
+  .status-dot.upcoming { background: var(--primary-text); }
+  .range { width: 100%; accent-color: var(--primary); }
 
-/* Back button styling */
-.back-btn {
-  background: var(--color-bg-button, #f4f4f4);
-  color: var(--color-text-main, #222);
-  border: 1px solid var(--color-border, #bbb);
-  border-radius: 0.3em;
-  padding: 0.5em 1.2em;
-  font-size: 1em;
-  margin-bottom: 1.5em;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.back-btn:hover {
-  background: var(--color-bg-accent, #e0f7fa);
-}
+  @media (max-width: 987px) {
+    .layout { grid-template-columns: 1fr; }
+    .side { position: static; }
+  }
 </style>

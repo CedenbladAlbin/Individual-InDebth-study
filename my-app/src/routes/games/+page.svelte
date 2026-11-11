@@ -1,42 +1,58 @@
-<script>
+<script lang="ts">
+  import { goto } from '$app/navigation';
+  import { api } from '$lib/api';
+
   let name = '';
   let description = '';
-  let message = '';
+  let error = '';
+  let loading = false;
 
   async function createGame() {
-    const token = localStorage.getItem('token');
-    console.log('JWT token used for create game:', token);
-    const res = await fetch('/api/games', {
+    loading = true;
+    error = '';
+    const res = await api('/api/games', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-      },
       body: JSON.stringify({ name, description })
     });
     if (res.ok) {
-      message = 'Game created!';
-      name = '';
-      description = '';
-    } else {
-      const data = await res.json().catch(() => ({}));
-      message = data.error || 'Failed to create game.';
+      const { gameId } = await res.json();
+      await goto(`/game/${gameId}`);
+      return;
     }
+    const data = await res.json().catch(() => ({}));
+    error = data.message || 'Failed to create game.';
+    loading = false;
   }
 </script>
 
-<main style="max-width: 500px; margin: 2rem auto; padding: 2rem; background: #23272f; border-radius: 12px; box-shadow: 0 2px 16px rgba(0,0,0,0.15); color: #fff;">
-  <h2 style="text-align:center;">Create a New Game Session</h2>
-  <form on:submit|preventDefault={createGame}>
-    <label for="name">Game Name</label>
-    <input id="name" type="text" bind:value={name} required style="width:100%;margin-bottom:1rem;padding:0.5rem;border-radius:6px;border:1px solid #444;background:#181c22;color:#fff;" />
+<svelte:head>
+  <title>New game · DnD Session Manager</title>
+</svelte:head>
 
-    <label for="description">Description</label>
-    <textarea id="description" bind:value={description} required style="width:100%;margin-bottom:1rem;padding:0.5rem;border-radius:6px;border:1px solid #444;background:#181c22;color:#fff;"></textarea>
+<main class="page page-narrow">
+  <a href="/my-games" class="back-link">← My games</a>
+  <header class="page-header">
+    <div>
+      <h1>New game</h1>
+      <p class="muted lead">Give your campaign a name. You can add scenes, NPCs and players next.</p>
+    </div>
+  </header>
 
-    <button type="submit" style="width:100%;padding:0.75rem;border:none;border-radius:6px;background:#6c47ff;color:#fff;font-size:1rem;font-weight:bold;cursor:pointer;transition:background 0.2s;">Create Game</button>
+  <form class="card stack-lg" on:submit|preventDefault={createGame}>
+    {#if error}<div class="alert alert-error" role="alert">{error}</div>{/if}
+    <label class="field">
+      <span class="field-label">Name</span>
+      <input class="input" type="text" maxlength="200" placeholder="e.g. The Lost Mines" bind:value={name} required />
+    </label>
+    <label class="field">
+      <span class="field-label">Description <span class="faint">(optional)</span></span>
+      <textarea class="input" rows="4" placeholder="Setting, tone, party level…" bind:value={description}></textarea>
+    </label>
+    <div class="row-end">
+      <a href="/my-games" class="btn btn-ghost">Cancel</a>
+      <button type="submit" class="btn btn-primary" disabled={loading || !name.trim()}>
+        {loading ? 'Creating…' : 'Create game'}
+      </button>
+    </div>
   </form>
-  {#if message}
-    <div style="margin-top:1rem;text-align:center;color:#ffb347;">{message}</div>
-  {/if}
 </main>

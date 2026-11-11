@@ -1,227 +1,265 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
 
+  type EntityType = 'scene' | 'npc' | 'player' | 'item';
+
   export let entities: any[] = [];
-  export let type = '';
-  export let onCreate = (entity: any) => {};
+  export let type: EntityType;
+  export let onCreate = () => {};
   export let onNotes = (entity: any) => {};
   export let onDelete = (entity: any) => {};
   export let onRemoveConnection = (type: string, entity: any, targetId: string) => {};
   export let itemMap: { [key: string]: any } = {};
   export let npcMap: { [key: string]: any } = {};
   export let sceneMap: { [key: string]: any } = {};
+  export let playerMap: { [key: string]: any } = {};
 
   const dispatch = createEventDispatcher();
-  function handleCardKeydown(event: KeyboardEvent, entity: any) {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      dispatch('entityClick', entity);
+
+  // Long campaigns can have hundreds of entries; show them in pages
+  const PAGE = 24;
+  let limit = PAGE;
+  $: visible = entities.slice(0, limit);
+
+  const LABELS: Record<EntityType, { one: string; many: string; hint: string }> = {
+    scene: { one: 'scene', many: 'scenes', hint: 'Scenes are the places your party visits. Open one to use the battle map.' },
+    npc: { one: 'NPC', many: 'NPCs', hint: 'Add the characters your players will meet, from shopkeepers to villains.' },
+    player: { one: 'player', many: 'players', hint: 'Add the characters in your party to track their gear.' },
+    item: { one: 'item', many: 'items', hint: 'Add loot, quest items and gear, then drag them onto their owner.' }
+  };
+
+  /** Key/value details shown on each card, per type */
+  function details(entity: any): [string, string][] {
+    const pairs: [string, any][] =
+      type === 'scene' ? [['Location', entity.location], ['Danger', entity.dangerLevel]]
+      : type === 'npc' ? [['Role', entity.role], ['Status', entity.status]]
+      : type === 'player' ? [['Class', entity.class], ['Level', entity.level]]
+      : [['Type', entity.itemType], ['Benefits', entity.benefits]];
+    return pairs.filter(([, v]) => v);
+  }
+
+  function open(entity: any) {
+    dispatch('entityClick', entity);
+  }
+  function onKeydown(e: KeyboardEvent, entity: any) {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      open(entity);
     }
   }
 </script>
-  <button id="createNew-btn" on:click={onCreate}>Create New {type}</button>
-<div class="card-list">
-  {#each entities as entity}
-    <div
-      class="card"
-      role="button"
-      tabindex="0"
-      on:click={() => dispatch('entityClick', entity)}
-      on:keydown={(e) => handleCardKeydown(e, entity)}
-    >
-      <div class="card-title">{entity.name}</div>
-      <div class="card-desc">{entity.description}</div>
-      {#if type === 'scene' && (entity.location || entity.dangerLevel)}
-        <div class="card-meta">
-          {#if entity.location}<span>Location: {entity.location}</span>{/if}
-          {#if entity.dangerLevel}<span>Danger: {entity.dangerLevel}</span>{/if}
-        </div>
-      {/if}
-      {#if type === 'npc' && (entity.role || entity.status)}
-        <div class="card-meta">
-          {#if entity.role}<span>Role: {entity.role}</span>{/if}
-          {#if entity.status}<span>Status: {entity.status}</span>{/if}
-        </div>
-      {/if}
-      {#if type === 'player' && (entity.class || entity.level)}
-        <div class="card-meta">
-          {#if entity.class}<span>Class: {entity.class}</span>{/if}
-          {#if entity.level}<span>Level: {entity.level}</span>{/if}
-        </div>
-      {/if}
-      {#if type === 'item' && (entity.itemType || entity.benefits)}
-        <div class="card-meta">
-          {#if entity.itemType}<span>Type: {entity.itemType}</span>{/if}
-          {#if entity.benefits}<span>Benefits: {entity.benefits}</span>{/if}
-        </div>
-      {/if}
-      <div class="card-connections">
 
+{#if entities.length === 0}
+  <div class="empty-state" data-type={type}>
+    <h3>No {LABELS[type].many} yet</h3>
+    <p>{LABELS[type].hint}</p>
+    <button class="btn btn-primary" on:click={onCreate}>+ New {LABELS[type].one}</button>
+  </div>
+{:else}
+  <ul class="card-grid">
+    {#each visible as entity (entity._id)}
+      <li>
+      <div
+        class="entity-card"
+        data-type={type}
+        role="button"
+        tabindex="0"
+        aria-label={`Open ${entity.name}`}
+        on:click={() => open(entity)}
+        on:keydown={(e) => onKeydown(e, entity)}
+      >
+        <div class="card-head">
+          <h3>{entity.name}</h3>
+          {#if type === 'npc' && entity.status}
+            <span class="badge">{entity.status}</span>
+          {/if}
+        </div>
 
-        {#if type === 'npc'}
-          {#if entity.sceneId || entity.scene}
-          {@const sid = entity.sceneId || (entity.scene && entity.scene._id)}
-            <span class="chip">
-              Scene: {sceneMap[sid]?.name || entity.scene?.name || sid}
-              <button class="chip-remove" title="Remove from scene"
-                on:click|stopPropagation={() => onRemoveConnection('npc-scene', entity, sid)}>×</button>
-            </span>
-          {/if}
-          {#if entity.itemIds && entity.itemIds.length}
-              {#each entity.itemIds as itemId}
-                <span class="chip">{entity.items && entity.items.find((i: any) => i._id === itemId)?.name || itemMap[itemId]?.name || itemId}
-                  <button class="chip-remove" title="Remove item from NPC" on:click|stopPropagation={() => onRemoveConnection('item-npc', { _id: itemId }, entity._id)}>×</button>
-                </span>
-              {/each}
-          {/if}
+        {#if entity.description}
+          <p class="desc muted">{entity.description}</p>
         {/if}
 
-        {#if type === 'scene'}
-          {#if entity.npcIds && entity.npcIds.length}
-            {#each entity.npcIds as npcId}
-                <span class="chip">{entity.npcs && entity.npcs.find((n: any) => n._id === npcId)?.name || npcMap[npcId]?.name || npcId}
-                  <button class="chip-remove" title="Remove NPC from scene" on:click|stopPropagation={() => onRemoveConnection('npc-scene', { _id: npcId }, entity._id)}>×</button>
-                </span>
-              {/each}
-          {/if}
+        {#if details(entity).length}
+          <dl class="details">
+            {#each details(entity) as [label, value]}
+              <div><dt>{label}</dt><dd>{value}</dd></div>
+            {/each}
+          </dl>
         {/if}
 
-        {#if type === 'item'}
-          {#if entity.ownerPlayer}
-            <span class="chip">Owner: {entity.ownerPlayer.name}
-              <button class="chip-remove" title="Remove from player" on:click|stopPropagation={() => onRemoveConnection('item-player', entity, entity.ownerPlayer._id)}>×</button>
-            </span>
-          {:else if entity.ownerNpc}
-            <span class="chip">Owner: {entity.ownerNpc.name}
-              <button class="chip-remove" title="Remove from NPC" on:click|stopPropagation={() => onRemoveConnection('item-npc', entity, entity.ownerNpc._id)}>×</button>
-            </span>
-          {:else if entity.sceneId || entity.scene}
-            {@const sid = entity.sceneId || (entity.scene && entity.scene._id)}
-            <span class="chip">Scene: {sceneMap[sid]?.name || entity.scene?.name || sid}
-              <button class="chip-remove" title="Remove from scene" on:click|stopPropagation={() => onRemoveConnection('item-scene', entity, sid)}>×</button>
-            </span>
+        <div class="links">
+          {#if type === 'npc'}
+            {#if entity.sceneId}
+              <span class="chip" data-type="scene">
+                <span class="dot"></span><span class="chip-label">{sceneMap[entity.sceneId]?.name || 'Unknown scene'}</span>
+                <button class="chip-remove" title="Remove from scene" aria-label="Remove from scene"
+                  on:click|stopPropagation={() => onRemoveConnection('npc-scene', entity, entity.sceneId)}>×</button>
+              </span>
+            {/if}
+            {#each entity.itemIds || [] as itemId}
+              <span class="chip" data-type="item">
+                <span class="dot"></span><span class="chip-label">{itemMap[itemId]?.name || 'Unknown item'}</span>
+                <button class="chip-remove" title="Remove item" aria-label="Remove item"
+                  on:click|stopPropagation={() => onRemoveConnection('item-npc', { _id: itemId }, entity._id)}>×</button>
+              </span>
+            {/each}
+          {:else if type === 'player'}
+            {#each entity.itemIds || [] as itemId}
+              <span class="chip" data-type="item">
+                <span class="dot"></span><span class="chip-label">{itemMap[itemId]?.name || 'Unknown item'}</span>
+                <button class="chip-remove" title="Remove item" aria-label="Remove item"
+                  on:click|stopPropagation={() => onRemoveConnection('item-player', { _id: itemId }, entity._id)}>×</button>
+              </span>
+            {/each}
+          {:else if type === 'scene'}
+            {#each Object.values(npcMap).filter((n) => n.sceneId === entity._id) as npc (npc._id)}
+              <span class="chip" data-type="npc">
+                <span class="dot"></span><span class="chip-label">{npc.name}</span>
+                <button class="chip-remove" title="Remove NPC from scene" aria-label="Remove NPC from scene"
+                  on:click|stopPropagation={() => onRemoveConnection('npc-scene', npc, entity._id)}>×</button>
+              </span>
+            {/each}
+            {#each Object.values(itemMap).filter((i) => i.sceneId === entity._id) as item (item._id)}
+              <span class="chip" data-type="item">
+                <span class="dot"></span><span class="chip-label">{item.name}</span>
+                <button class="chip-remove" title="Remove item from scene" aria-label="Remove item from scene"
+                  on:click|stopPropagation={() => onRemoveConnection('item-scene', item, entity._id)}>×</button>
+              </span>
+            {/each}
+          {:else if type === 'item'}
+            {#if entity.ownerPlayerId}
+              <span class="chip" data-type="player">
+                <span class="dot"></span><span class="chip-label">{playerMap[entity.ownerPlayerId]?.name || 'Unknown player'}</span>
+                <button class="chip-remove" title="Remove from player" aria-label="Remove from player"
+                  on:click|stopPropagation={() => onRemoveConnection('item-player', entity, entity.ownerPlayerId)}>×</button>
+              </span>
+            {:else if entity.ownerNpcId}
+              <span class="chip" data-type="npc">
+                <span class="dot"></span><span class="chip-label">{npcMap[entity.ownerNpcId]?.name || 'Unknown NPC'}</span>
+                <button class="chip-remove" title="Remove from NPC" aria-label="Remove from NPC"
+                  on:click|stopPropagation={() => onRemoveConnection('item-npc', entity, entity.ownerNpcId)}>×</button>
+              </span>
+            {:else if entity.sceneId}
+              <span class="chip" data-type="scene">
+                <span class="dot"></span><span class="chip-label">{sceneMap[entity.sceneId]?.name || 'Unknown scene'}</span>
+                <button class="chip-remove" title="Remove from scene" aria-label="Remove from scene"
+                  on:click|stopPropagation={() => onRemoveConnection('item-scene', entity, entity.sceneId)}>×</button>
+              </span>
+            {:else}
+              <span class="faint small">Not assigned</span>
+            {/if}
           {/if}
-        {/if}
+        </div>
 
-        {#if type === 'player'}
-          {#if entity.itemIds && entity.itemIds.length}
-            {#each entity.itemIds as itemId}
-                <span class="chip">{entity.items && entity.items.find((i: any) => i._id === itemId)?.name || (typeof itemMap !== 'undefined' && itemMap[itemId]?.name) || itemId}
-                  <button class="chip-remove" title="Remove item from player" on:click|stopPropagation={() => onRemoveConnection('item-player', { _id: itemId }, entity._id)}>×</button>
-                </span>
-              {/each}
+        <div class="card-actions">
+          {#if type === 'scene'}
+            <button class="btn btn-ghost btn-sm open-hint" on:click|stopPropagation={() => dispatch('openMap', entity)}>Open map →</button>
           {/if}
-        {/if}
+          <button class="btn btn-ghost btn-sm" on:click|stopPropagation={() => onNotes(entity)}>Notes</button>
+          <button class="btn btn-danger btn-sm" on:click|stopPropagation={() => onDelete(entity)}>Delete</button>
+        </div>
       </div>
-      <div class="card-actions">
-        <button on:click|stopPropagation={() => onNotes(entity)}>View Notes</button>
-        <button class="delete-btn" on:click|stopPropagation={() => onDelete(entity)}>Delete</button>
-      </div>
+      </li>
+    {/each}
+  </ul>
+  {#if entities.length > limit}
+    <div class="more">
+      <span class="faint small">Showing {limit} of {entities.length}</span>
+      <button class="btn btn-outline btn-sm" on:click={() => (limit += PAGE)}>Show {Math.min(PAGE, entities.length - limit)} more</button>
+      <button class="btn btn-ghost btn-sm" on:click={() => (limit = entities.length)}>Show all</button>
     </div>
-  {/each}
-</div>
+  {/if}
+{/if}
 
 <style>
-.chip-remove {
-  background: none;
-  border: none;
-  color: var(--color-text-accent);
-  font-size: 1.1em;
-  margin-left: 0.3em;
-  cursor: pointer;
-  padding: 0 0.2em;
-  line-height: 1;
-}
-.chip-remove:hover {
-  color: var(--color-bg-danger);
-}
-  #createNew-btn {
-    background: var(--color-bg-button);
-    color: var(--color-text-main);
-    border: none;
-    border-radius: 4px;
-    padding: 0.5em 1em;
-    cursor: pointer;
-    font-size: 1em;
-    transition: background 0.15s;
+  .more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-3);
+    margin-top: var(--sp-5);
   }
-
-.card-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.2em;
-  margin-top: 1em;
-}
-.card {
-  background: var(--color-bg-main);
-  border-radius: 8px;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.10);
-  padding: 1em 1.2em 0.7em 1.2em;
-  min-width: 220px;
-  max-width: 260px;
-  flex: 1 1 220px;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5em;
-}
-.card-title {
-  font-weight: bold;
-  font-size: 1.15em;
-  margin-bottom: 0.2em;
-  color: var(--color-text-accent);
-}
-.card-desc {
-  color: var(--color-text-secondary);
-  font-size: 1em;
-}
-.card-meta {
-  font-size: 0.95em;
-  color: var(--color-text-accent);
-  display: flex;
-  flex-direction: column;
-  gap: 0.1em;
-}
-.card-actions {
-  margin-top: 0.7em;
-  display: flex;
-  gap: 0.5em;
-}
-.card-actions button {
-  background: var(--color-bg-button);
-  color: var(--color-text-main);
-  border: none;
-  border-radius: 4px;
-  padding: 0.2em 0.8em;
-  cursor: pointer;
-  font-size: 0.95em;
-  transition: background 0.15s;
-}
-.card-actions button:hover {
-  background: var(--color-bg-button-hover);
-}
-.card-actions .delete-btn {
-  background: var(--color-bg-danger);
-}
-.card-actions .delete-btn:hover {
-  background: var(--color-bg-danger-dark);
-}
-
-
-.card-connections {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4em;
-  margin-bottom: 0.3em;
-  margin-top: 0.2em;
-}
-.chip {
-  background: var(--color-bg-button);
-  color: var(--color-text-accent);
-  border-radius: 12px;
-  padding: 0.15em 0.7em;
-  font-size: 0.92em;
-  display: inline-block;
-  margin-right: 0.2em;
-}
-
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 233px), 1fr));
+    gap: var(--sp-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .entity-card {
+    position: relative;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    padding: var(--sp-4) var(--sp-4) var(--sp-3);
+    overflow: hidden;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    cursor: pointer;
+    transition: border-color 0.15s, background-color 0.15s;
+  }
+  .entity-card::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 3px;
+    background: var(--type-color);
+  }
+  .entity-card:hover {
+    border-color: var(--border-strong);
+    background: var(--surface-2);
+  }
+  .card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--sp-3);
+  }
+  .card-head h3 {
+    font-size: var(--fs-base);
+    overflow-wrap: anywhere;
+  }
+  .desc {
+    font-size: var(--fs-xs);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .details {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2) var(--sp-4);
+    margin: 0;
+    font-size: var(--fs-xs);
+  }
+  .details div { display: flex; gap: var(--sp-2); }
+  .details dt { color: var(--text-faint); }
+  .details dd { margin: 0; }
+  .links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+  }
+  .links:empty { display: none; }
+  .card-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--sp-1);
+    margin-top: auto;
+    padding-top: var(--sp-3);
+    border-top: 1px solid var(--border);
+  }
+  .open-hint {
+    margin-right: auto;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    color: var(--type-color);
+  }
 </style>

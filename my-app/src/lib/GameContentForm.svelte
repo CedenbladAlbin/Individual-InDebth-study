@@ -1,129 +1,116 @@
+<script lang="ts" context="module">
+  export type EntityType = 'npc' | 'player' | 'item' | 'scene';
+
+  /** Extra fields per type: [key, label, placeholder] */
+  export const FIELDS: Record<EntityType, [string, string, string][]> = {
+    scene: [['location', 'Location', 'e.g. Port Varrow'], ['dangerLevel', 'Danger level', 'e.g. Low, High']],
+    npc: [['role', 'Role', 'e.g. Merchant, Villain'], ['status', 'Status', 'e.g. Friendly, Hostile']],
+    player: [['class', 'Class', 'e.g. Wizard'], ['level', 'Level', 'e.g. 3']],
+    item: [['itemType', 'Type', 'e.g. Weapon, Potion'], ['benefits', 'Benefits', 'e.g. +1 to hit']]
+  };
+
+  export const GROUP_HINT: Record<EntityType, string> = {
+    npc: 'e.g. a city, clan or faction',
+    scene: 'e.g. a region or island',
+    player: 'e.g. Main party, Retired',
+    item: 'e.g. Loot act 2, Quest items'
+  };
+</script>
+
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
-  export let type: 'npc' | 'player' | 'item' | 'scene';
+  import { createEventDispatcher, onMount } from 'svelte';
+  import { api } from '$lib/api';
+
+  export let type: EntityType;
   export let gameId: string;
-  export let connections: any = {};
-  export let onCreated: ((data: any) => void) | undefined = undefined;
-  let name = '';
-  let description = '';
-  // Extra fields for each type
-  let itemType = '';
-  let itemBenefits = '';
-  let npcRole = '';
-  let npcStatus = '';
-  let playerClass = '';
-  let playerLevel = '';
-  let sceneLocation = '';
-  let sceneDangerLevel = '';
+  /** When set, the form edits this entity instead of creating a new one */
+  export let entity: any = null;
+  /** Existing group names, offered as suggestions */
+  export let groups: string[] = [];
+  export let defaultGroup = '';
+
+  const dispatch = createEventDispatcher();
+  const listId = `groups-${Math.random().toString(36).slice(2, 8)}`;
+
+  const NAME_PLACEHOLDER: Record<EntityType, string> = {
+    scene: 'e.g. The Rusty Anchor',
+    npc: 'e.g. Mara Quickwhistle',
+    player: 'e.g. Aria the Ranger',
+    item: 'e.g. Potion of Healing'
+  };
+
+  let name = entity?.name ?? '';
+  let description = entity?.description ?? '';
+  let group = entity ? entity.group ?? '' : defaultGroup;
+  let extra: Record<string, string> = Object.fromEntries(FIELDS[type].map(([k]) => [k, entity?.[k] ?? '']));
   let error = '';
   let loading = false;
-  const dispatch = createEventDispatcher();
+  let nameInput: HTMLInputElement;
+
+  // Wait a tick so this runs after the surrounding modal has taken focus
+  onMount(() => { setTimeout(() => nameInput?.focus()); });
 
   async function handleSubmit() {
     loading = true;
     error = '';
-    const token = localStorage.getItem('token');
-    if (!token) {
-      error = 'Not signed in.';
-      loading = false;
-      return;
-    }
-    let extraData = {};
-    if (type === 'item') {
-      extraData = { itemType, benefits: itemBenefits };
-    } else if (type === 'npc') {
-      extraData = { role: npcRole, status: npcStatus };
-    } else if (type === 'player') {
-      extraData = { class: playerClass, level: playerLevel };
-    } else if (type === 'scene') {
-      extraData = { location: sceneLocation, dangerLevel: sceneDangerLevel };
-    }
-    const body: any = {
-      type,
-      gameId,
-      data: { name, description, ...extraData },
-      connections
-    };
+    const data = { name, description, group, ...extra };
     try {
-      const res = await fetch('/api/game-content', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(body)
-      });
+      const res = entity
+        ? await api('/api/game-content', { method: 'PATCH', body: JSON.stringify({ type, ids: [entity._id], data }) })
+        : await api('/api/game-content', { method: 'POST', body: JSON.stringify({ type, gameId, data }) });
       if (res.ok) {
-        const result = await res.json();
-        name = '';
-        description = '';
-        dispatch('created', result);
-        if (onCreated) onCreated(result);
+        dispatch(entity ? 'saved' : 'created', await res.json());
       } else {
-        error = 'Failed to create.';
+        error = (await res.json().catch(() => ({}))).message || 'Failed to save.';
       }
-    } catch (e) {
-      error = 'Failed to create.';
+    } catch {
+      error = 'Failed to save.';
     }
     loading = false;
   }
 </script>
 
-<form on:submit|preventDefault={handleSubmit} class="content-form">
-  <input type="text" bind:value={name} placeholder="Name" required />
-  <textarea bind:value={description} placeholder="Description" rows="2"></textarea>
-
-  {#if type === 'item'}
-    <input type="text" bind:value={itemType} placeholder="Item Type (e.g. weapon, potion)" />
-    <input type="text" bind:value={itemBenefits} placeholder="Benefits (comma separated)" />
-  {/if}
-  {#if type === 'npc'}
-    <input type="text" bind:value={npcRole} placeholder="Role (e.g. merchant, enemy)" />
-    <input type="text" bind:value={npcStatus} placeholder="Status (e.g. alive, dead)" />
-  {/if}
-  {#if type === 'player'}
-    <input type="text" bind:value={playerClass} placeholder="Class (e.g. wizard, rogue)" />
-    <input type="text" bind:value={playerLevel} placeholder="Level" />
-  {/if}
-  {#if type === 'scene'}
-    <input type="text" bind:value={sceneLocation} placeholder="Location (e.g. forest, tavern)" />
-    <input type="text" bind:value={sceneDangerLevel} placeholder="Danger Level (e.g. low, high)" />
-  {/if}
-
-  <button type="submit" disabled={loading}>{loading ? 'Saving...' : `Add ${type}`}</button>
-  {#if error}
-    <div class="error">{error}</div>
-  {/if}
+<form class="stack-lg" on:submit|preventDefault={handleSubmit}>
+  {#if error}<div class="alert alert-error" role="alert">{error}</div>{/if}
+  <div class="name-row">
+    <label class="field">
+      <span class="field-label">Name</span>
+      <input class="input" type="text" maxlength="200" placeholder={NAME_PLACEHOLDER[type]} bind:value={name} bind:this={nameInput} required />
+    </label>
+    <label class="field">
+      <span class="field-label">Group <span class="faint">(optional)</span></span>
+      <input class="input" type="text" maxlength="60" list={listId} placeholder={GROUP_HINT[type]} bind:value={group} />
+      <datalist id={listId}>{#each groups as g}<option value={g}></option>{/each}</datalist>
+    </label>
+  </div>
+  <label class="field">
+    <span class="field-label">Description <span class="faint">(optional)</span></span>
+    <textarea class="input" rows="3" bind:value={description}></textarea>
+  </label>
+  <div class="form-grid">
+    {#each FIELDS[type] as [key, label, placeholder]}
+      <label class="field">
+        <span class="field-label">{label} <span class="faint">(optional)</span></span>
+        <input class="input" type="text" {placeholder} bind:value={extra[key]} />
+      </label>
+    {/each}
+  </div>
+  <div class="row-end">
+    <button type="button" class="btn btn-ghost" on:click={() => dispatch('cancel')}>Cancel</button>
+    <button type="submit" class="btn btn-primary" disabled={loading || !name.trim()}>
+      {loading ? 'Saving…' : entity ? 'Save changes' : 'Create'}
+    </button>
+  </div>
 </form>
 
 <style>
-.content-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-input, textarea {
-  background: var(--color-bg-secondary);
-  color: var(--color-text-main);
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  padding: 0.5rem;
-}
-button {
-  background: var(--color-bg-button);
-  color: var(--color-text-main);
-  border: none;
-  border-radius: 4px;
-  padding: 0.5rem 1rem;
-  cursor: pointer;
-}
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-.error {
-  color: var(--color-text-warning);
-  font-size: 0.95em;
-}
+  /* name : group = φ : 1 */
+  .name-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.618fr) minmax(0, 1fr);
+    gap: var(--sp-4);
+  }
+  @media (max-width: 610px) {
+    .name-row { grid-template-columns: 1fr; }
+  }
 </style>
