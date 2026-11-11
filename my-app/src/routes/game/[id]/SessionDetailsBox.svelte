@@ -10,6 +10,16 @@
   export let onChanged: () => void;
   /** Open a linked scene's battle map */
   export let onOpenScene: (scene: any) => void = () => {};
+  /** Open "Share with an AI" scoped to this session */
+  export let onShare: (sessionId: string) => void = () => {};
+
+  async function share() {
+    // Read the id first: closing clears `session` in the parent
+    const id = session._id;
+    await save();
+    onClose();
+    onShare(id);
+  }
 
   type Tab = 'overview' | 'entities' | 'notes' | 'more';
   const TABS: [Tab, string][] = [['overview', 'Overview'], ['entities', 'Linked'], ['notes', 'Notes'], ['more', 'More']];
@@ -165,6 +175,7 @@
 
   <div class="toolbar">
     <button class="btn btn-outline btn-sm" on:click={toggleEnded}>{draft.isEnded ? 'Reopen' : 'Mark as ended'}</button>
+    <button class="btn btn-ghost btn-sm" on:click={share} title="Prepare this session for ChatGPT, Claude or another AI chat">✦ Ask an AI</button>
     <span class="hint">Everything here saves automatically as you type.</span>
     <button class="btn btn-danger btn-sm push" on:click={deleteSession}>Delete</button>
   </div>

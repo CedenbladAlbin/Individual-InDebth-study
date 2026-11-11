@@ -10,6 +10,9 @@
   import EntityBrowser from '$lib/EntityBrowser.svelte';
   import EntityPicker, { type Candidate } from '$lib/EntityPicker.svelte';
   import SessionDetailsBox from './SessionDetailsBox.svelte';
+  import ShareWithAI from '$lib/ai/ShareWithAI.svelte';
+  import ImportFromAI from '$lib/ai/ImportFromAI.svelte';
+  import type { Scope as AiScope } from '$lib/ai/contextPack';
   import { sortByDate, formatSessionDate } from '$lib/sessions';
 
   type ContentType = 'scene' | 'npc' | 'player' | 'item';
@@ -48,6 +51,16 @@
 
   let sessions: any[] = [];
   let selectedSession: any = null;
+  /** Scope for the "Share with an AI" dialog; null when closed */
+  let aiShare: AiScope | null = null;
+  let importOpen = false;
+
+  /** After an import: reload and show the tab where most new entries landed */
+  async function afterImport(created: Record<ContentType, number>) {
+    await fetchAllContent();
+    const top = (Object.entries(created) as [ContentType, number][]).sort((a, b) => b[1] - a[1])[0];
+    if (top && top[1] > 0 && top[0] !== activeTab) switchTab(top[0]);
+  }
 
   let notesModal: { type: string, entityId: string, name: string, notes: any[], loading: boolean, error: string, editingNote: any | null } | null = null;
   let newNoteTitle = '';
@@ -396,6 +409,14 @@
         <h1>{game.name}</h1>
         {#if game.description}<p class="muted lead">{game.description}</p>{/if}
       </div>
+      <div class="row">
+        <button class="btn btn-ghost" on:click={() => (importOpen = true)} title="Add NPCs, items, scenes or players from an AI chat's answer">
+          ⤓ Import from AI
+        </button>
+        <button class="btn btn-outline" on:click={() => (aiShare = { kind: 'all' })} title="Prepare a brief of this campaign for ChatGPT, Claude or another AI chat">
+          ✦ Share with AI
+        </button>
+      </div>
     </header>
 
     <div class="game-grid">
@@ -470,12 +491,13 @@
 {/if}
 
 {#if selectedSession}
-  {#key selectedSession._id}
+  {#key selectedSession?._id}
     <SessionDetailsBox
       session={selectedSession}
       onClose={() => { selectedSession = null; }}
       onChanged={fetchSessions}
       onOpenScene={(s) => (fullscreenScene = sceneMap[s._id] ?? s)}
+      onShare={(sessionId) => (aiShare = { kind: 'session', sessionId })}
     />
   {/key}
 {/if}
@@ -570,6 +592,20 @@
       {/if}
     </svelte:fragment>
   </Modal>
+{/if}
+
+{#if aiShare}
+  <ShareWithAI gameId={id} initialScope={aiShare} onClose={() => (aiShare = null)} onImport={() => { aiShare = null; importOpen = true; }} />
+{/if}
+
+{#if importOpen}
+  <ImportFromAI
+    gameId={id}
+    existing={{ npc: npcs, item: items, scene: scenes, player: players }}
+    {allGroups}
+    onClose={() => (importOpen = false)}
+    onImported={afterImport}
+  />
 {/if}
 
 {#if picker}

@@ -380,6 +380,7 @@ textarea.input { min-height: var(--sp-8); padding: var(--sp-3); resize: vertical
 .modal-body { padding: var(--sp-5); overflow: auto; }
 .modal-footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--sp-3);
   padding: var(--sp-4) var(--sp-5);
