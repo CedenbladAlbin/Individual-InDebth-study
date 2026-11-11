@@ -3,7 +3,7 @@ import { str } from './access.js';
 /** Text fields a session's notes may contain. */
 export const NOTE_TEXT_FIELDS = [
   'summary', 'plotDevelopments', 'quests', 'loot', 'secrets', 'factions',
-  'mysteries', 'goals', 'downtime', 'nextPlans'
+  'mysteries', 'goals', 'downtime', 'nextPlans', 'additional'
 ];
 
 const CONNECTION_KEYS = ['npcs', 'items', 'scenes', 'players', 'quests'];

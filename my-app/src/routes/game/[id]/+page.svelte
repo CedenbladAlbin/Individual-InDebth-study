@@ -475,6 +475,7 @@
       session={selectedSession}
       onClose={() => { selectedSession = null; }}
       onChanged={fetchSessions}
+      onOpenScene={(s) => (fullscreenScene = sceneMap[s._id] ?? s)}
     />
   {/key}
 {/if}
